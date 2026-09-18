@@ -10,6 +10,7 @@ import { LoginScreen } from './components/LoginScreen';
 import { TelemetryView } from './components/TelemetryView';
 import { BlocksView } from './components/BlocksView';
 import { ChannelsView } from './components/ChannelsView';
+import { CategoriesView } from './components/CategoriesView';
 import { AnnouncementsView } from './components/AnnouncementsView';
 import { StatusView } from './components/StatusView';
 import { SettingsView } from './components/SettingsView';
@@ -183,6 +184,10 @@ export default function App() {
 
           {activeTab === 'channels' && (
             <ChannelsView key={refreshTrigger} onNotify={addToast} />
+          )}
+
+          {activeTab === 'categories' && (
+            <CategoriesView key={refreshTrigger} onNotify={addToast} />
           )}
 
           {activeTab === 'announcements' && (

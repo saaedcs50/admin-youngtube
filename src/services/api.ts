@@ -5,6 +5,7 @@
 import {
   AnnouncementItem,
   BlockItem,
+  CategoryItem,
   ChannelItem,
   StatusResponse,
   TelemetryCountry,
@@ -17,6 +18,7 @@ export const DEFAULT_WORKER_URL = 'https://youngtube-worker.saaedbelal.workers.d
 export const STORAGE_KEY_WORKER_URL = 'worker_url';
 export const STORAGE_KEY_ADMIN = 'yt_admin_key';
 export const STORAGE_KEY_REMEMBER = 'yt_admin_remember';
+export const STORAGE_KEY_CATEGORIES = 'yt_admin_categories_cache';
 
 type UnauthorizedHandler = (message?: string) => void;
 let unauthorizedListener: UnauthorizedHandler | null = null;
@@ -466,3 +468,152 @@ export async function postAnnouncement(announcement: {
     body: JSON.stringify(announcement),
   });
 }
+
+export const INITIAL_DEFAULT_CATEGORIES: CategoryItem[] = [
+  { id: 'quran', name: 'قرآن كريم وأذكار', icon: 'BookOpen', order: 1, description: 'تلاوات، تجويد، وقصص القرآن للأطفال' },
+  { id: 'stories', name: 'قصص وحكايات', icon: 'Sparkles', order: 2, description: 'قصص الأنبياء، الحكايات الهادفة والتربوية' },
+  { id: 'cartoons', name: 'كرتون وأناشيد', icon: 'Smile', order: 3, description: 'رسوم متحركة هادفة وأناشيد أطفال نظيفة' },
+  { id: 'education', name: 'تعليم ولغات', icon: 'GraduationCap', order: 4, description: 'الحروف، الأرقام، الإنجليزية، والتأسيس' },
+  { id: 'science', name: 'علوم واستكشاف', icon: 'Atom', order: 5, description: 'تجارب علمية، الطبيعة، والحيوانات' },
+  { id: 'crafts', name: 'رسم وفنون', icon: 'Palette', order: 6, description: 'أشغال يدوية، تلوين، وتنمية المهارات' },
+  { id: 'sports', name: 'حركة ورياضة', icon: 'Dumbbell', order: 7, description: 'تمارين رياضية ونشاط بدني للأطفال' },
+];
+
+export async function fetchCategories(): Promise<CategoryItem[]> {
+  try {
+    const res = await apiRequest<any>('/api/categories');
+    let list: unknown[] = [];
+    if (Array.isArray(res)) list = res;
+    else if (res && Array.isArray(res.categories)) list = res.categories;
+    else if (res && Array.isArray(res.items)) list = res.items;
+    else if (res && Array.isArray(res.data)) list = res.data;
+
+    if (list.length > 0) {
+      const parsed = list.map((c: any, index: number): CategoryItem => ({
+        id: String(c.id ?? c.slug ?? c.name ?? `cat-${index}`),
+        name: String(c.name ?? c.title ?? c.id ?? ''),
+        icon: c.icon || 'Tag',
+        order: Number(c.order ?? index + 1),
+        description: c.description || '',
+        ...c,
+      })).filter((c) => c.id && c.name);
+
+      // Cache locally
+      try {
+        localStorage.setItem(STORAGE_KEY_CATEGORIES, JSON.stringify(parsed));
+      } catch {
+        /* ignore */
+      }
+      return parsed;
+    }
+  } catch (err) {
+    console.warn('Could not fetch categories from server endpoint, attempting fallback...', err);
+  }
+
+  // Fallback to local storage cache or initial defaults
+  try {
+    const cached = localStorage.getItem(STORAGE_KEY_CATEGORIES);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+
+  return INITIAL_DEFAULT_CATEGORIES;
+}
+
+export async function saveCategory(category: CategoryItem): Promise<unknown> {
+  // 1. Try sending to Worker
+  let workerResult: unknown = null;
+  try {
+    workerResult = await apiRequest('/api/admin/categories', {
+      method: 'POST',
+      body: JSON.stringify({
+        action: 'save',
+        category,
+        item: category,
+      }),
+    });
+  } catch (err) {
+    console.warn('Worker save category failed, persisting locally in cache:', err);
+  }
+
+  // 2. Also update local cache
+  try {
+    const current = await fetchCategories();
+    const existingIndex = current.findIndex((c) => c.id === category.id);
+    let updated: CategoryItem[];
+    if (existingIndex >= 0) {
+      updated = [...current];
+      updated[existingIndex] = { ...updated[existingIndex], ...category };
+    } else {
+      updated = [...current, { ...category, order: category.order || current.length + 1 }];
+    }
+    localStorage.setItem(STORAGE_KEY_CATEGORIES, JSON.stringify(updated));
+  } catch {
+    /* ignore */
+  }
+
+  return workerResult || { ok: true, savedLocally: true };
+}
+
+export async function deleteCategory(categoryId: string): Promise<unknown> {
+  // 1. Try sending delete to Worker
+  let workerResult: unknown = null;
+  try {
+    workerResult = await apiRequest('/api/admin/categories', {
+      method: 'POST',
+      body: JSON.stringify({
+        action: 'delete',
+        id: categoryId,
+        categoryId,
+      }),
+    });
+  } catch (err) {
+    console.warn('Worker delete category failed, deleting from local cache:', err);
+  }
+
+  // 2. Remove from local cache
+  try {
+    const current = await fetchCategories();
+    const updated = current.filter((c) => c.id !== categoryId);
+    localStorage.setItem(STORAGE_KEY_CATEGORIES, JSON.stringify(updated));
+  } catch {
+    /* ignore */
+  }
+
+  return workerResult || { ok: true, deletedLocally: true };
+}
+
+export async function reorderCategories(categories: CategoryItem[]): Promise<unknown> {
+  const ordered = categories.map((c, idx) => ({ ...c, order: idx + 1 }));
+
+  // 1. Send to Worker
+  let workerResult: unknown = null;
+  try {
+    workerResult = await apiRequest('/api/admin/categories', {
+      method: 'POST',
+      body: JSON.stringify({
+        action: 'reorder',
+        categories: ordered,
+        categoryIds: ordered.map((c) => c.id),
+      }),
+    });
+  } catch (err) {
+    console.warn('Worker reorder failed, updating local cache:', err);
+  }
+
+  // 2. Update local cache
+  try {
+    localStorage.setItem(STORAGE_KEY_CATEGORIES, JSON.stringify(ordered));
+  } catch {
+    /* ignore */
+  }
+
+  return workerResult || { ok: true };
+}
+

@@ -2,9 +2,20 @@
  * Type definitions for admin-youngtube
  */
 
-export type TabType = 'telemetry' | 'blocks' | 'channels' | 'announcements' | 'status' | 'settings';
+export type TabType = 'telemetry' | 'blocks' | 'channels' | 'categories' | 'announcements' | 'status' | 'settings';
 
 export type TimeRangeDays = 7 | 30 | 90;
+
+export interface CategoryItem {
+  id: string;
+  name: string;
+  icon?: string;
+  order?: number;
+  description?: string;
+  channelCount?: number;
+  createdAt?: string | number;
+  [key: string]: any;
+}
 
 export interface TelemetryCountry {
   country?: string;

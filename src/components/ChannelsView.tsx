@@ -13,17 +13,19 @@ import {
   ShieldCheck,
   Sparkles,
   Tag,
+  Tags,
   Tv,
   Youtube,
 } from 'lucide-react';
 import {
   addChannel,
+  fetchCategories,
   fetchChannelsLatest,
   fetchGlobalBlocks,
   fetchStatus,
   manageBlock,
 } from '../services/api';
-import { BlockItem, ChannelItem, StatusResponse } from '../types';
+import { BlockItem, CategoryItem, ChannelItem, StatusResponse } from '../types';
 import { parseYouTubeInput, resolveYouTubeMetadata } from '../utils/youtube';
 import { ConfirmModal } from './ConfirmModal';
 
@@ -33,10 +35,12 @@ interface ChannelsViewProps {
 
 export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
   const [channels, setChannels] = useState<ChannelItem[]>([]);
+  const [availableCategories, setAvailableCategories] = useState<CategoryItem[]>([]);
   const [globalBlocks, setGlobalBlocks] = useState<BlockItem[]>([]);
   const [statusData, setStatusData] = useState<StatusResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
 
   // Add Channel Modal State
   const [isAddOpen, setIsAddOpen] = useState(false);
@@ -59,14 +63,12 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
   const loadData = async () => {
     setIsLoading(true);
     try {
-      // 1) Parallel fetch:
-      // - fetchChannelsLatest() -> full list (~196)
-      // - fetchGlobalBlocks() -> blocked channelIds + playlistIds
-      // - fetchStatus() -> channelsCount for the summary card only
-      const [latestRes, blocksRes, statusRes] = await Promise.allSettled([
+      // Parallel fetch:
+      const [latestRes, blocksRes, statusRes, catsRes] = await Promise.allSettled([
         fetchChannelsLatest(),
         fetchGlobalBlocks(),
         fetchStatus(),
+        fetchCategories(),
       ]);
 
       if (latestRes.status === 'fulfilled') {
@@ -86,6 +88,10 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
         setStatusData(statusRes.value);
       } else {
         console.error('Error fetching status:', statusRes.reason);
+      }
+
+      if (catsRes.status === 'fulfilled') {
+        setAvailableCategories(catsRes.value);
       }
     } catch (err: any) {
       console.error('Unexpected error fetching channels data:', err);
@@ -238,7 +244,17 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
   // Build a Set of blocked sourceIds for fast O(1) lookup
   const blockedIdSet = new Set(globalBlocks.map((b) => b.id));
 
+  // Filter channels based on search query AND category dropdown
   const filteredChannels = channels.filter((c) => {
+    // 1. Category filter
+    if (selectedCategoryFilter !== 'all') {
+      const catList = (c.categories || []).map((x) => String(x).toLowerCase());
+      const targetFilter = selectedCategoryFilter.toLowerCase();
+      const hasCat = catList.some((cat) => cat === targetFilter || cat.includes(targetFilter));
+      if (!hasCat) return false;
+    }
+
+    // 2. Search query filter
     if (!searchQuery.trim()) return true;
     const q = searchQuery.toLowerCase();
     const titleMatch = c.title?.toLowerCase().includes(q);
@@ -246,6 +262,22 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
     const catMatch = c.categories?.some((cat) => cat.toLowerCase().includes(q));
     return titleMatch || idMatch || catMatch;
   });
+
+  // Toggle category pill inside Add Modal
+  const toggleCategoryInInput = (catName: string) => {
+    const current = categoriesInput
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const exists = current.includes(catName);
+    let updated: string[];
+    if (exists) {
+      updated = current.filter((c) => c !== catName);
+    } else {
+      updated = [...current, catName];
+    }
+    setCategoriesInput(updated.join(', '));
+  };
 
   // Summary card "إجمالي القنوات" = status.channelsCount ?? list.length
   const channelsCount =
@@ -304,16 +336,36 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
 
       {/* Control bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
-        <div className="relative flex-1 sm:max-w-xs">
-          <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            id="channels-search-input"
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="بحث بالعنوان أو المعرف أو التصنيف..."
-            className="w-full pr-9 pl-3 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
-          />
+        <div className="flex items-center gap-2 flex-1 flex-wrap sm:flex-nowrap">
+          <div className="relative flex-1 sm:max-w-xs">
+            <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              id="channels-search-input"
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="بحث بالعنوان أو المعرف أو التصنيف..."
+              className="w-full pr-9 pl-3 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+            />
+          </div>
+
+          {/* Category Filter dropdown */}
+          <div className="flex items-center gap-1.5">
+            <Tags className="w-4 h-4 text-slate-400 shrink-0 hidden sm:inline" />
+            <select
+              id="channels-category-filter"
+              value={selectedCategoryFilter}
+              onChange={(e) => setSelectedCategoryFilter(e.target.value)}
+              className="px-3 py-2 text-xs font-semibold rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:ring-1 focus:ring-amber-500 focus:outline-hidden cursor-pointer"
+            >
+              <option value="all">كل التصنيفات ({channels.length})</option>
+              {availableCategories.map((cat) => (
+                <option key={cat.id} value={cat.name}>
+                  {cat.name} ({channels.filter((c) => (c.categories || []).includes(cat.name) || (c.categories || []).includes(cat.id)).length})
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
@@ -625,8 +677,39 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
                   value={categoriesInput}
                   onChange={(e) => setCategoriesInput(e.target.value)}
                   placeholder="تعليمي, قصص, كرتون, أناشيد"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-xs focus:ring-2 focus:ring-amber-500 focus:outline-hidden"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-xs focus:ring-2 focus:ring-amber-500 focus:outline-hidden mb-2"
                 />
+
+                {/* Quick Select Category Badges */}
+                {availableCategories.length > 0 && (
+                  <div className="space-y-1">
+                    <span className="text-[10px] text-slate-400 font-medium">
+                      اضغط للتحديد السريع:
+                    </span>
+                    <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pt-0.5">
+                      {availableCategories.map((cat) => {
+                        const isSelected = categoriesInput
+                          .split(',')
+                          .map((s) => s.trim().toLowerCase())
+                          .includes(cat.name.toLowerCase());
+                        return (
+                          <button
+                            key={cat.id}
+                            type="button"
+                            onClick={() => toggleCategoryInInput(cat.name)}
+                            className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold transition cursor-pointer ${
+                              isSelected
+                                ? 'bg-amber-500 text-slate-950 font-bold ring-1 ring-amber-400'
+                                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                            }`}
+                          >
+                            + {cat.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center justify-end gap-3 pt-3">
