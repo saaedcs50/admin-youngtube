@@ -1,0 +1,19 @@
+{
+  "id": "/",
+  "name": "admin-youngtube | لوحة تحكم YoungTube",
+  "short_name": "YT Admin",
+  "description": "لوحة تحكم وإدارة وتحليلات YoungTube المستقلة للمشرفين والأهل",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#1e293b",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
