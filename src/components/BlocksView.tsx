@@ -3,6 +3,7 @@ import {
   AlertCircle,
   CheckCircle2,
   FolderLock,
+  Link as LinkIcon,
   ListFilter,
   Loader2,
   Plus,
@@ -10,12 +11,14 @@ import {
   Search,
   ShieldAlert,
   ShieldCheck,
+  Sparkles,
   Trash2,
   Tv,
   Youtube,
 } from 'lucide-react';
 import { fetchGlobalBlocks, manageBlock } from '../services/api';
 import { BlockItem } from '../types';
+import { parseYouTubeInput, resolveYouTubeMetadata } from '../utils/youtube';
 import { ConfirmModal } from './ConfirmModal';
 
 interface BlocksViewProps {
@@ -30,9 +33,12 @@ export const BlocksView: React.FC<BlocksViewProps> = ({ onNotify }) => {
 
   // Add Block Modal
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [urlInput, setUrlInput] = useState('');
   const [newId, setNewId] = useState('');
   const [newType, setNewType] = useState<'channel' | 'playlist'>('channel');
+  const [isResolvingUrl, setIsResolvingUrl] = useState(false);
   const [isSubmittingAdd, setIsSubmittingAdd] = useState(false);
+  const [autoFilled, setAutoFilled] = useState(false);
 
   // Delete Block Confirmation Modal
   const [blockToDelete, setBlockToDelete] = useState<BlockItem | null>(null);
@@ -55,6 +61,47 @@ export const BlocksView: React.FC<BlocksViewProps> = ({ onNotify }) => {
     loadBlocks();
   }, []);
 
+  const handleUrlInputChange = (val: string) => {
+    setUrlInput(val);
+    setAutoFilled(false);
+
+    if (!val.trim()) return;
+
+    const parsed = parseYouTubeInput(val);
+    if (parsed) {
+      setNewType(parsed.sourceType);
+      if (!parsed.isHandleOrCustom) {
+        setNewId(parsed.sourceId);
+      }
+    }
+  };
+
+  const handleResolveUrl = async () => {
+    const raw = urlInput.trim() || newId.trim();
+    if (!raw) {
+      onNotify('warning', 'الرابط مطلوب', 'يرجى إدخال رابط يوتيوب أو المعرف للاستخراج');
+      return;
+    }
+
+    setIsResolvingUrl(true);
+    try {
+      const resolved = await resolveYouTubeMetadata(raw);
+      setNewType(resolved.sourceType);
+      setNewId(resolved.sourceId);
+      setAutoFilled(true);
+      onNotify(
+        'info',
+        'تم تحليل الرابط بنجاح',
+        `تم استخراج: ${resolved.sourceType === 'playlist' ? 'قائمة تشغيل' : 'قناة'} (${resolved.sourceId})`
+      );
+    } catch (err: any) {
+      console.error('Error resolving YouTube URL:', err);
+      onNotify('error', 'تعذر استخراج البيانات تلقائياً', 'يمكنك إدخال المعرف يدوياً');
+    } finally {
+      setIsResolvingUrl(false);
+    }
+  };
+
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanId = newId.trim();
@@ -76,7 +123,9 @@ export const BlocksView: React.FC<BlocksViewProps> = ({ onNotify }) => {
         'تمت إضافة الحظر بنجاح',
         `تم حظر الـ ${newType === 'channel' ? 'قناة' : 'قائمة التشغيل'} ذات المعرف ${cleanId}`
       );
+      setUrlInput('');
       setNewId('');
+      setAutoFilled(false);
       setIsAddOpen(false);
       await loadBlocks();
     } catch (err: any) {
@@ -99,25 +148,29 @@ export const BlocksView: React.FC<BlocksViewProps> = ({ onNotify }) => {
 
       onNotify(
         'success',
-        'تم فك الحظر بنجاح',
-        `تمت إزالة ${blockToDelete.id} من قوائم الحظر الشامل`
+        'تم رفع الحظر بنجاح',
+        `تم إلغاء حظر الـ ${blockToDelete.type === 'channel' ? 'قناة' : 'قائمة التشغيل'} (${blockToDelete.id})`
       );
       setBlockToDelete(null);
       await loadBlocks();
     } catch (err: any) {
-      console.error('Error removing block:', err);
-      onNotify('error', 'فشل فك الحظر', err?.message || 'خطأ أثناء تنفيذ الطلب');
+      console.error('Error deleting block:', err);
+      onNotify('error', 'فشل رفع الحظر', err?.message || 'خطأ أثناء الاتصال بالخادم');
     } finally {
       setIsSubmittingDelete(false);
     }
   };
 
-  const filteredBlocks = blocks.filter((b) => {
-    if (typeFilter !== 'all' && b.type !== typeFilter) return false;
+  const filteredBlocks = blocks.filter((item) => {
+    // Type filter
+    if (typeFilter !== 'all' && item.type !== typeFilter) {
+      return false;
+    }
+    // Search query filter
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      const idMatch = b.id?.toLowerCase().includes(q);
-      const titleMatch = b.title?.toLowerCase().includes(q);
+      const idMatch = item.id.toLowerCase().includes(q);
+      const titleMatch = item.title?.toLowerCase().includes(q) || false;
       return idMatch || titleMatch;
     }
     return true;
@@ -125,11 +178,11 @@ export const BlocksView: React.FC<BlocksViewProps> = ({ onNotify }) => {
 
   return (
     <div id="blocks-view-container" className="space-y-6">
-      {/* Top action & filter bar */}
+      {/* Top Banner / Controls */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Type Filter Buttons */}
-          <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700/60">
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Filter pills */}
+          <div className="flex items-center p-1 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs">
             <button
               onClick={() => setTypeFilter('all')}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
@@ -190,7 +243,12 @@ export const BlocksView: React.FC<BlocksViewProps> = ({ onNotify }) => {
           {/* Add block button */}
           <button
             id="open-add-block-modal-btn"
-            onClick={() => setIsAddOpen(true)}
+            onClick={() => {
+              setUrlInput('');
+              setNewId('');
+              setAutoFilled(false);
+              setIsAddOpen(true);
+            }}
             className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition-all shadow-sm shadow-red-600/20 cursor-pointer"
           >
             <Plus className="w-4 h-4" />
@@ -250,33 +308,34 @@ export const BlocksView: React.FC<BlocksViewProps> = ({ onNotify }) => {
                     id={`block-row-${item.id}`}
                     className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
                   >
-                    <td className="py-3.5 px-4">
-                      {item.type === 'channel' ? (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-900/60 font-semibold">
-                          <Tv className="w-3.5 h-3.5" />
-                          <span>قناة</span>
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-900/60 font-semibold">
+                    <td className="py-3 px-4">
+                      {item.type === 'playlist' ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-semibold text-[11px] border border-purple-200 dark:border-purple-900/60">
                           <Youtube className="w-3.5 h-3.5" />
                           <span>قائمة تشغيل</span>
                         </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-semibold text-[11px] border border-amber-200 dark:border-amber-900/60">
+                          <Tv className="w-3.5 h-3.5" />
+                          <span>قناة</span>
+                        </span>
                       )}
                     </td>
-                    <td className="py-3.5 px-4 font-mono font-bold text-slate-900 dark:text-slate-100 tracking-wider">
+                    <td className="py-3 px-4 font-mono font-semibold text-slate-700 dark:text-slate-300">
                       {item.id}
                     </td>
-                    <td className="py-3.5 px-4 text-slate-600 dark:text-slate-400">
-                      {item.title || item.reason || '—'}
+                    <td className="py-3 px-4 text-slate-600 dark:text-slate-400">
+                      {item.title || '—'}
                     </td>
-                    <td className="py-3.5 px-4 text-center">
+                    <td className="py-3 px-4 text-center">
                       <button
                         id={`delete-block-btn-${item.id}`}
                         onClick={() => setBlockToDelete(item)}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 transition-colors cursor-pointer"
-                        title="فك الحظر وحذف المعرف"
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-red-50 dark:bg-red-950/60 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-900 hover:bg-red-100 dark:hover:bg-red-900/80 text-xs font-semibold transition cursor-pointer"
+                        title="رفع الحظر"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>رفع الحظر</span>
                       </button>
                     </td>
                   </tr>
@@ -306,12 +365,55 @@ export const BlocksView: React.FC<BlocksViewProps> = ({ onNotify }) => {
                   إضافة عنصر إلى الحظر الشامل
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  إرسال طلب POST إلى /api/admin/blocks
+                  يمكنك لصق رابط يوتيوب أو إدخال المعرف مباشرة
                 </p>
               </div>
             </div>
 
             <form onSubmit={handleAddSubmit} className="space-y-4">
+              {/* Smart URL / Input Box */}
+              <div className="p-3 rounded-xl bg-red-50/60 dark:bg-red-950/30 border border-red-200/80 dark:border-red-900/50 space-y-2">
+                <label
+                  htmlFor="smart-block-url-input"
+                  className="block text-xs font-bold text-red-900 dark:text-red-300 flex items-center justify-between"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <LinkIcon className="w-3.5 h-3.5 text-red-600" />
+                    رابط القناة أو القائمة (YouTube Link / Handle / ID)
+                  </span>
+                  {autoFilled && (
+                    <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> تم الاستخراج
+                    </span>
+                  )}
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    id="smart-block-url-input"
+                    type="text"
+                    dir="ltr"
+                    value={urlInput}
+                    onChange={(e) => handleUrlInputChange(e.target.value)}
+                    placeholder="https://www.youtube.com/@Channel أو رابط قائمة..."
+                    className="flex-1 px-3 py-2 rounded-xl border border-red-300/80 dark:border-red-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-mono text-xs focus:ring-2 focus:ring-red-500 focus:outline-hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleResolveUrl}
+                    disabled={isResolvingUrl || (!urlInput.trim() && !newId.trim())}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition shadow-xs disabled:opacity-50 cursor-pointer"
+                    title="استخراج المعرف تلقائياً"
+                  >
+                    {isResolvingUrl ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-3.5 h-3.5" />
+                    )}
+                    <span className="whitespace-nowrap">تحليل</span>
+                  </button>
+                </div>
+              </div>
+
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-2">
                   نوع العنصر
@@ -358,14 +460,9 @@ export const BlocksView: React.FC<BlocksViewProps> = ({ onNotify }) => {
                   required
                   value={newId}
                   onChange={(e) => setNewId(e.target.value)}
-                  placeholder={newType === 'channel' ? 'مثال: UCxxxxxxxxxxxxxxxx' : 'مثال: PLxxxxxxxxxxxxxxxx'}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono text-xs focus:ring-2 focus:ring-amber-500 focus:outline-hidden"
+                  placeholder={newType === 'channel' ? 'UCxxxxxxxxxxxxxxxx أو @handle' : 'PLxxxxxxxxxxxxxxxx'}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono text-xs focus:ring-2 focus:ring-red-500 focus:outline-hidden"
                 />
-                <p className="mt-1 text-[11px] text-slate-400">
-                  {newType === 'channel'
-                    ? 'أدخل معرّف القناة الرسمي في يوتيوب (يبدأ غالباً بـ UC)'
-                    : 'أدخل معرّف قائمة التشغيل (يبدأ غالباً بـ PL)'}
-                </p>
               </div>
 
               <div className="flex items-center justify-end gap-3 pt-3">
@@ -384,7 +481,7 @@ export const BlocksView: React.FC<BlocksViewProps> = ({ onNotify }) => {
                   className="flex items-center gap-1.5 px-5 py-2 text-xs font-bold rounded-xl bg-red-600 hover:bg-red-700 text-white transition shadow-sm disabled:opacity-50 cursor-pointer"
                 >
                   {isSubmittingAdd && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  <span>حظر وحفظ</span>
+                  <span>تأكيد الحظر</span>
                 </button>
               </div>
             </form>
@@ -392,16 +489,14 @@ export const BlocksView: React.FC<BlocksViewProps> = ({ onNotify }) => {
         </div>
       )}
 
-      {/* Confirm Delete Dialog */}
+      {/* Delete Confirmation Modal */}
       <ConfirmModal
         isOpen={!!blockToDelete}
-        title="تأكيد فك الحظر"
-        message={`هل أنت متأكد من إزالة حظر ${
-          blockToDelete?.type === 'channel' ? 'القناة' : 'قائمة التشغيل'
-        } ذات المعرف (${blockToDelete?.id})؟ ستصبح متاحة مجدداً وفق سياسة المنصة.`}
-        confirmLabel="نعم، فك الحظر"
+        title="تأكيد رفع الحظر"
+        message={`هل أنت متأكد من رفع الحظر عن الـ ${blockToDelete?.type === 'channel' ? 'قناة' : 'قائمة التشغيل'} ذات المعرّف (${blockToDelete?.id})؟ ستصبح متاحة مجدداً للأطفال.`}
+        confirmLabel="نعم، رفع الحظر"
         cancelLabel="تراجع"
-        isDestructive={true}
+        isDestructive={false}
         isLoading={isSubmittingDelete}
         onConfirm={handleConfirmDelete}
         onCancel={() => setBlockToDelete(null)}

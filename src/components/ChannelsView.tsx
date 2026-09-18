@@ -1,14 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import {
   Ban,
+  CheckCircle2,
   FolderPlus,
   Layers,
+  Link as LinkIcon,
   Loader2,
   Plus,
   RefreshCw,
   Search,
   ShieldAlert,
   ShieldCheck,
+  Sparkles,
   Tag,
   Tv,
   Youtube,
@@ -21,6 +24,7 @@ import {
   manageBlock,
 } from '../services/api';
 import { BlockItem, ChannelItem, StatusResponse } from '../types';
+import { parseYouTubeInput, resolveYouTubeMetadata } from '../utils/youtube';
 import { ConfirmModal } from './ConfirmModal';
 
 interface ChannelsViewProps {
@@ -36,11 +40,14 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
 
   // Add Channel Modal State
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [urlInput, setUrlInput] = useState('');
   const [sourceId, setSourceId] = useState('');
   const [sourceType, setSourceType] = useState<'channel' | 'playlist'>('channel');
   const [title, setTitle] = useState('');
   const [categoriesInput, setCategoriesInput] = useState('');
+  const [isResolvingUrl, setIsResolvingUrl] = useState(false);
   const [isSubmittingAdd, setIsSubmittingAdd] = useState(false);
+  const [autoFilled, setAutoFilled] = useState(false);
 
   // Block / Unblock Modal State
   const [blockTarget, setBlockTarget] = useState<{
@@ -91,6 +98,54 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
   useEffect(() => {
     loadData();
   }, []);
+
+  // Handle immediate parsing when user enters/pastes a URL or ID
+  const handleUrlInputChange = (val: string) => {
+    setUrlInput(val);
+    setAutoFilled(false);
+
+    if (!val.trim()) {
+      return;
+    }
+
+    const parsed = parseYouTubeInput(val);
+    if (parsed) {
+      setSourceType(parsed.sourceType);
+      if (!parsed.isHandleOrCustom) {
+        setSourceId(parsed.sourceId);
+      }
+    }
+  };
+
+  // Smart resolution from YouTube URL/Handle/ID
+  const handleResolveUrl = async () => {
+    const raw = urlInput.trim() || sourceId.trim();
+    if (!raw) {
+      onNotify('warning', 'الرابط مطلوب', 'يرجى إدخال رابط يوتيوب أو المعرف للاستخراج');
+      return;
+    }
+
+    setIsResolvingUrl(true);
+    try {
+      const resolved = await resolveYouTubeMetadata(raw);
+      setSourceType(resolved.sourceType);
+      setSourceId(resolved.sourceId);
+      if (resolved.title && (!title || title.trim() === '')) {
+        setTitle(resolved.title);
+      }
+      setAutoFilled(true);
+      onNotify(
+        'info',
+        'تم تحليل الرابط بنجاح',
+        `تم استخراج: ${resolved.sourceType === 'playlist' ? 'قائمة تشغيل' : 'قناة'} (${resolved.sourceId})`
+      );
+    } catch (err: any) {
+      console.error('Error resolving YouTube URL:', err);
+      onNotify('error', 'تعذر استخراج البيانات تلقائياً', 'يمكنك إدخال المعرف والعنوان يدوياً');
+    } finally {
+      setIsResolvingUrl(false);
+    }
+  };
 
   const handleConfirmBlockToggle = async () => {
     if (!blockTarget) return;
@@ -163,9 +218,11 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
       onNotify('success', 'تمت إضافة القناة/المصدر بنجاح', `تم حفظ "${cleanTitle}" بنجاح في الـ Worker`);
 
       // Reset form
+      setUrlInput('');
       setSourceId('');
       setTitle('');
       setCategoriesInput('');
+      setAutoFilled(false);
       setIsAddOpen(false);
 
       // Refresh data
@@ -272,7 +329,14 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
 
           <button
             id="open-add-channel-modal-btn"
-            onClick={() => setIsAddOpen(true)}
+            onClick={() => {
+              setUrlInput('');
+              setSourceId('');
+              setTitle('');
+              setCategoriesInput('');
+              setAutoFilled(false);
+              setIsAddOpen(true);
+            }}
             className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold transition-all shadow-sm shadow-amber-500/20 cursor-pointer"
           >
             <Plus className="w-4 h-4" />
@@ -424,15 +488,61 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
               </div>
               <div>
                 <h3 className="font-bold text-base text-slate-900 dark:text-slate-100">
-                  إضافة قناة أو قائمة تشغيل معتمدة
+                  إضافة قناة أو قائمة تشغيل
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  إرسال طلب POST إلى /api/admin/channels
+                  يمكنك لصق رابط يوتيوب العادي وسيقوم النظام باستخراج البيانات تلقائياً
                 </p>
               </div>
             </div>
 
             <form onSubmit={handleAddSubmit} className="space-y-4">
+              {/* Smart URL / Input Box */}
+              <div className="p-3 rounded-xl bg-amber-50/60 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-900/50 space-y-2">
+                <label
+                  htmlFor="smart-url-input"
+                  className="block text-xs font-bold text-amber-900 dark:text-amber-300 flex items-center justify-between"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <LinkIcon className="w-3.5 h-3.5 text-amber-600" />
+                    رابط القناة أو القائمة (YouTube Link / Handle / ID)
+                  </span>
+                  {autoFilled && (
+                    <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> تم الاستخراج
+                    </span>
+                  )}
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    id="smart-url-input"
+                    type="text"
+                    dir="ltr"
+                    value={urlInput}
+                    onChange={(e) => handleUrlInputChange(e.target.value)}
+                    placeholder="https://www.youtube.com/@Channel أو رابط قائمة تشغيل أو فيديو..."
+                    className="flex-1 px-3 py-2 rounded-xl border border-amber-300/80 dark:border-amber-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-mono text-xs focus:ring-2 focus:ring-amber-500 focus:outline-hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleResolveUrl}
+                    disabled={isResolvingUrl || (!urlInput.trim() && !sourceId.trim())}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold transition shadow-xs disabled:opacity-50 cursor-pointer"
+                    title="استخراج المعرف واسم القناة تلقائياً"
+                  >
+                    {isResolvingUrl ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-3.5 h-3.5" />
+                    )}
+                    <span className="whitespace-nowrap">تحليل</span>
+                  </button>
+                </div>
+                <div className="text-[10px] text-amber-800/80 dark:text-amber-400/80">
+                  يدعم: روابط القنوات (@handle)، روابط قوائم التشغيل (list=PL...)، روابط الفيديوهات، أو معرّف القناة المباشر (UC...)
+                </div>
+              </div>
+
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-2">
                   نوع المصدر
@@ -497,7 +607,7 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
                   required
                   value={sourceId}
                   onChange={(e) => setSourceId(e.target.value)}
-                  placeholder={sourceType === 'channel' ? 'UCxxxxxxxxxxxxxxxx' : 'PLxxxxxxxxxxxxxxxx'}
+                  placeholder={sourceType === 'channel' ? 'UCxxxxxxxxxxxxxxxx أو @handle' : 'PLxxxxxxxxxxxxxxxx'}
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono text-xs focus:ring-2 focus:ring-amber-500 focus:outline-hidden"
                 />
               </div>
