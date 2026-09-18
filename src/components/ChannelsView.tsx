@@ -1,20 +1,26 @@
 import React, { useEffect, useState } from 'react';
 import {
-  AlertCircle,
-  CheckCircle2,
+  Ban,
   FolderPlus,
   Layers,
   Loader2,
   Plus,
   RefreshCw,
   Search,
+  ShieldAlert,
+  ShieldCheck,
   Tag,
-  Trash2,
   Tv,
   Youtube,
 } from 'lucide-react';
-import { addChannel, extractChannelsFromStatus, fetchStatus, removeChannel } from '../services/api';
-import { ChannelItem, StatusResponse } from '../types';
+import {
+  addChannel,
+  fetchChannelsLatest,
+  fetchGlobalBlocks,
+  fetchStatus,
+  manageBlock,
+} from '../services/api';
+import { BlockItem, ChannelItem, StatusResponse } from '../types';
 import { ConfirmModal } from './ConfirmModal';
 
 interface ChannelsViewProps {
@@ -23,6 +29,7 @@ interface ChannelsViewProps {
 
 export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
   const [channels, setChannels] = useState<ChannelItem[]>([]);
+  const [globalBlocks, setGlobalBlocks] = useState<BlockItem[]>([]);
   const [statusData, setStatusData] = useState<StatusResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -35,23 +42,47 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
   const [categoriesInput, setCategoriesInput] = useState('');
   const [isSubmittingAdd, setIsSubmittingAdd] = useState(false);
 
-  // Delete Channel Modal State
-  const [itemToDelete, setItemToDelete] = useState<ChannelItem | null>(null);
-  const [isSubmittingDelete, setIsSubmittingDelete] = useState(false);
+  // Block / Unblock Modal State
+  const [blockTarget, setBlockTarget] = useState<{
+    channel: ChannelItem;
+    action: 'block' | 'unblock';
+  } | null>(null);
+  const [isSubmittingBlock, setIsSubmittingBlock] = useState(false);
 
   const loadData = async () => {
     setIsLoading(true);
     try {
-      // 1. Fetch status to see channels count and items if returned
-      const statusRes = await fetchStatus();
-      setStatusData(statusRes);
-      const extracted = extractChannelsFromStatus(statusRes);
-      if (extracted.length > 0) {
-        setChannels(extracted);
+      // 1) Parallel fetch:
+      // - fetchChannelsLatest() -> full list (~196)
+      // - fetchGlobalBlocks() -> blocked channelIds + playlistIds
+      // - fetchStatus() -> channelsCount for the summary card only
+      const [latestRes, blocksRes, statusRes] = await Promise.allSettled([
+        fetchChannelsLatest(),
+        fetchGlobalBlocks(),
+        fetchStatus(),
+      ]);
+
+      if (latestRes.status === 'fulfilled') {
+        setChannels(latestRes.value);
+      } else {
+        console.error('Error fetching latest channels:', latestRes.reason);
+        onNotify('error', 'فشل قراءة قائمة القنوات', latestRes.reason?.message || 'تعذر تحميل القنوات من Worker');
+      }
+
+      if (blocksRes.status === 'fulfilled') {
+        setGlobalBlocks(blocksRes.value);
+      } else {
+        console.error('Error fetching global blocks:', blocksRes.reason);
+      }
+
+      if (statusRes.status === 'fulfilled') {
+        setStatusData(statusRes.value);
+      } else {
+        console.error('Error fetching status:', statusRes.reason);
       }
     } catch (err: any) {
-      console.error('Error fetching channels status:', err);
-      onNotify('error', 'فشل قراءة حالة القنوات', err?.message || 'خطأ في الاتصال بالخادم');
+      console.error('Unexpected error fetching channels data:', err);
+      onNotify('error', 'خطأ أثناء قراءة البيانات', err?.message || 'خطأ في الاتصال بالخادم');
     } finally {
       setIsLoading(false);
     }
@@ -60,6 +91,50 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
   useEffect(() => {
     loadData();
   }, []);
+
+  const handleConfirmBlockToggle = async () => {
+    if (!blockTarget) return;
+    setIsSubmittingBlock(true);
+    const { channel, action } = blockTarget;
+    const targetType: 'channel' | 'playlist' =
+      channel.sourceType === 'playlist' ? 'playlist' : 'channel';
+
+    try {
+      if (action === 'block') {
+        await manageBlock({
+          action: 'add',
+          type: targetType,
+          id: channel.sourceId,
+        });
+        onNotify(
+          'success',
+          'تم حظر المصدر بنجاح',
+          `تم حظر "${channel.title || channel.sourceId}" وإضافتها لقائمة الحظر العام`
+        );
+      } else {
+        await manageBlock({
+          action: 'remove',
+          type: targetType,
+          id: channel.sourceId,
+        });
+        onNotify(
+          'success',
+          'تم رفع الحظر بنجاح',
+          `تم إلغاء حظر "${channel.title || channel.sourceId}" بنجاح`
+        );
+      }
+
+      // 4) After block/unblock: refresh fetchGlobalBlocks(). Do not remove row from table.
+      const updatedBlocks = await fetchGlobalBlocks();
+      setGlobalBlocks(updatedBlocks);
+      setBlockTarget(null);
+    } catch (err: any) {
+      console.error('Error toggling block state:', err);
+      onNotify('error', 'فشل تنفيذ الإجراء', err?.message || 'خطأ أثناء الاتصال بالخادم');
+    } finally {
+      setIsSubmittingBlock(false);
+    }
+  };
 
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -87,23 +162,13 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
 
       onNotify('success', 'تمت إضافة القناة/المصدر بنجاح', `تم حفظ "${cleanTitle}" بنجاح في الـ Worker`);
 
-      // Optimistically update list
-      const newItem: ChannelItem = {
-        sourceId: cleanSourceId,
-        sourceType,
-        title: cleanTitle,
-        categories,
-        addedAt: Date.now(),
-      };
-      setChannels((prev) => [newItem, ...prev.filter((c) => c.sourceId !== cleanSourceId)]);
-
       // Reset form
       setSourceId('');
       setTitle('');
       setCategoriesInput('');
       setIsAddOpen(false);
 
-      // Refresh status
+      // Refresh data
       await loadData();
     } catch (err: any) {
       console.error('Error adding channel:', err);
@@ -113,26 +178,8 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
     }
   };
 
-  const handleConfirmDelete = async () => {
-    if (!itemToDelete) return;
-    setIsSubmittingDelete(true);
-    try {
-      await removeChannel(itemToDelete.sourceId);
-
-      onNotify('success', 'تم حذف المصدر', `تم حذف "${itemToDelete.title || itemToDelete.sourceId}" بنجاح`);
-
-      setChannels((prev) => prev.filter((c) => c.sourceId !== itemToDelete.sourceId));
-      setItemToDelete(null);
-
-      // Refresh status
-      await loadData();
-    } catch (err: any) {
-      console.error('Error removing channel:', err);
-      onNotify('error', 'فشل حذف القناة', err?.message || 'خطأ أثناء تنفيذ الحذف');
-    } finally {
-      setIsSubmittingDelete(false);
-    }
-  };
+  // Build a Set of blocked sourceIds for fast O(1) lookup
+  const blockedIdSet = new Set(globalBlocks.map((b) => b.id));
 
   const filteredChannels = channels.filter((c) => {
     if (!searchQuery.trim()) return true;
@@ -143,10 +190,13 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
     return titleMatch || idMatch || catMatch;
   });
 
+  // Summary card "إجمالي القنوات" = status.channelsCount ?? list.length
   const channelsCount =
-    statusData?.channels_count ??
     statusData?.channelsCount ??
+    statusData?.channels_count ??
     channels.length;
+
+  const blockedCount = channels.filter((c) => blockedIdSet.has(c.sourceId)).length;
 
   return (
     <div id="channels-view-container" className="space-y-6">
@@ -167,15 +217,15 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
         </div>
 
         <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex items-center gap-3">
-          <div className="p-3 rounded-xl bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400">
-            <Youtube className="w-5 h-5" />
+          <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/60 text-red-600 dark:text-red-400">
+            <Ban className="w-5 h-5" />
           </div>
           <div>
             <div className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-              حالة الكاش والذاكرة
+              المصادر المحظورة حالياً
             </div>
-            <div className="text-sm font-bold text-slate-900 dark:text-slate-100 font-mono">
-              {statusData?.cache?.cached ? 'مفعل (Cached)' : 'تحديث مباشر'}
+            <div className="text-2xl font-extrabold text-red-600 dark:text-red-400 font-mono">
+              {blockedCount}
             </div>
           </div>
         </div>
@@ -186,10 +236,10 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
           </div>
           <div>
             <div className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-              التحقق من حالة الـ Worker
+              حالة الكاش والاتصال
             </div>
             <div className="text-sm font-bold text-emerald-600 dark:text-emerald-400">
-              {statusData?.status || 'متصل (200 OK)'}
+              {statusData?.cache?.cached ? 'مفعل (Cached)' : 'تحديث مباشر'}
             </div>
           </div>
         </div>
@@ -250,7 +300,7 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
                 <th className="py-3 px-4">العنوان</th>
                 <th className="py-3 px-4">معرّف المصدر (sourceId)</th>
                 <th className="py-3 px-4">التصنيفات</th>
-                <th className="py-3 px-4 text-center">إجراءات</th>
+                <th className="py-3 px-4 text-center">إجراءات الحظر</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
@@ -264,64 +314,94 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
               ) : filteredChannels.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="py-12 text-center text-slate-400">
-                    {searchQuery ? 'لا توجد قنوات تطابق البحث' : 'لا توجد قنوات معروضة حالياً. يمكنك إضافة أول قناة باستخدام الزر أعلاه.'}
+                    {searchQuery ? 'لا توجد قنوات تطابق البحث' : 'لا توجد قنوات متاحة حالياً.'}
                   </td>
                 </tr>
               ) : (
-                filteredChannels.map((c) => (
-                  <tr
-                    key={c.sourceId}
-                    id={`channel-row-${c.sourceId}`}
-                    className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
-                  >
-                    <td className="py-3.5 px-4">
-                      {c.sourceType === 'playlist' ? (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-semibold text-[11px] border border-purple-200 dark:border-purple-900/60">
-                          <Youtube className="w-3.5 h-3.5" />
-                          <span>قائمة تشغيل</span>
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-semibold text-[11px] border border-amber-200 dark:border-amber-900/60">
-                          <Tv className="w-3.5 h-3.5" />
-                          <span>قناة</span>
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-3.5 px-4 font-bold text-slate-900 dark:text-slate-100 text-sm">
-                      {c.title || 'بدون عنوان'}
-                    </td>
-                    <td className="py-3.5 px-4 font-mono font-semibold text-slate-600 dark:text-slate-400">
-                      {c.sourceId}
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <div className="flex flex-wrap gap-1">
-                        {Array.isArray(c.categories) && c.categories.length > 0 ? (
-                          c.categories.map((cat, i) => (
-                            <span
-                              key={i}
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[10px]"
-                            >
-                              <Tag className="w-2.5 h-2.5" />
-                              <span>{cat}</span>
-                            </span>
-                          ))
+                filteredChannels.map((c) => {
+                  const isBlocked = blockedIdSet.has(c.sourceId);
+
+                  return (
+                    <tr
+                      key={c.sourceId}
+                      id={`channel-row-${c.sourceId}`}
+                      className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
+                    >
+                      <td className="py-3.5 px-4">
+                        {c.sourceType === 'playlist' ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-semibold text-[11px] border border-purple-200 dark:border-purple-900/60">
+                            <Youtube className="w-3.5 h-3.5" />
+                            <span>قائمة تشغيل</span>
+                          </span>
                         ) : (
-                          <span className="text-slate-400 text-[11px]">عام</span>
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-semibold text-[11px] border border-amber-200 dark:border-amber-900/60">
+                            <Tv className="w-3.5 h-3.5" />
+                            <span>قناة</span>
+                          </span>
                         )}
-                      </div>
-                    </td>
-                    <td className="py-3.5 px-4 text-center">
-                      <button
-                        id={`delete-channel-btn-${c.sourceId}`}
-                        onClick={() => setItemToDelete(c)}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 transition-colors cursor-pointer"
-                        title="حذف القناة من المنصة"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </td>
-                  </tr>
-                ))
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-bold text-slate-900 dark:text-slate-100 text-sm">
+                            {c.title || 'بدون عنوان'}
+                          </span>
+                          {isBlocked && (
+                            <span
+                              id={`channel-blocked-badge-${c.sourceId}`}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-100 dark:bg-red-950/70 text-red-700 dark:text-red-300 font-bold text-[10px] border border-red-200 dark:border-red-900/80"
+                            >
+                              <ShieldAlert className="w-3 h-3" />
+                              <span>محظورة</span>
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3.5 px-4 font-mono font-semibold text-slate-600 dark:text-slate-400">
+                        {c.sourceId}
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <div className="flex flex-wrap gap-1">
+                          {Array.isArray(c.categories) && c.categories.length > 0 ? (
+                            c.categories.map((cat, i) => (
+                              <span
+                                key={i}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[10px]"
+                              >
+                                <Tag className="w-2.5 h-2.5" />
+                                <span>{cat}</span>
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-slate-400 text-[11px]">عام</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3.5 px-4 text-center">
+                        {isBlocked ? (
+                          <button
+                            id={`unblock-channel-btn-${c.sourceId}`}
+                            onClick={() => setBlockTarget({ channel: c, action: 'unblock' })}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 dark:hover:bg-emerald-900/80 font-bold text-xs transition cursor-pointer"
+                            title="إلغاء حظر القناة / القائمة"
+                          >
+                            <ShieldCheck className="w-3.5 h-3.5" />
+                            <span>رفع الحظر</span>
+                          </button>
+                        ) : (
+                          <button
+                            id={`block-channel-btn-${c.sourceId}`}
+                            onClick={() => setBlockTarget({ channel: c, action: 'block' })}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-50 dark:bg-red-950/60 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800 hover:bg-red-100 dark:hover:bg-red-900/80 font-bold text-xs transition cursor-pointer"
+                            title="حظر القناة / القائمة"
+                          >
+                            <Ban className="w-3.5 h-3.5" />
+                            <span>حظر</span>
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -463,17 +543,21 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
         </div>
       )}
 
-      {/* Confirm Delete Dialog */}
+      {/* Confirm Block/Unblock Dialog */}
       <ConfirmModal
-        isOpen={!!itemToDelete}
-        title="تأكيد حذف القناة"
-        message={`هل أنت متأكد من حذف (${itemToDelete?.title || itemToDelete?.sourceId}) من مصادر المنصة؟ لن تظهر محتوياتها بعد الآن.`}
-        confirmLabel="نعم، حذف القناة"
+        isOpen={!!blockTarget}
+        title={blockTarget?.action === 'block' ? 'تأكيد حظر المصدر' : 'تأكيد رفع الحظر'}
+        message={
+          blockTarget?.action === 'block'
+            ? `هل أنت متأكد من حظر "${blockTarget?.channel.title || blockTarget?.channel.sourceId}"؟ سيتم منع ظهور فيديوهات هذا المصدر في تطبيق الأطفال فوراً.`
+            : `هل أنت متأكد من رفع الحظر عن "${blockTarget?.channel.title || blockTarget?.channel.sourceId}"؟ سيتم السماح بعرض محتواها مجدداً في تطبيق الأطفال.`
+        }
+        confirmLabel={blockTarget?.action === 'block' ? 'نعم، حظر المصدر' : 'نعم، رفع الحظر'}
         cancelLabel="تراجع"
-        isDestructive={true}
-        isLoading={isSubmittingDelete}
-        onConfirm={handleConfirmDelete}
-        onCancel={() => setItemToDelete(null)}
+        isDestructive={blockTarget?.action === 'block'}
+        isLoading={isSubmittingBlock}
+        onConfirm={handleConfirmBlockToggle}
+        onCancel={() => setBlockTarget(null)}
       />
     </div>
   );

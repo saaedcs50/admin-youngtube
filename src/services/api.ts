@@ -362,6 +362,16 @@ export async function manageBlock(payload: {
   });
 }
 
+export async function fetchChannelsLatest(): Promise<ChannelItem[]> {
+  const res = await apiRequest<any>('/api/channels-latest');
+  // apiRequest already attaches Bearer if logged in; public endpoint also works without
+  const list = Array.isArray(res) ? res
+    : Array.isArray(res?.channels) ? res.channels
+    : Array.isArray(res?.items) ? res.items
+    : [];
+  return list.map(normalizeChannelItem).filter((x) => x.sourceId);
+}
+
 export function extractChannelsFromStatus(status: StatusResponse): ChannelItem[] {
   const candidates = [
     status.channels,
@@ -390,12 +400,14 @@ function normalizeChannelItem(raw: any): ChannelItem {
   const sourceId = String(raw.sourceId || raw.id || raw.channelId || raw.playlistId || '');
   const sourceType: 'channel' | 'playlist' =
     raw.sourceType === 'playlist' || String(sourceId).startsWith('PL') ? 'playlist' : 'channel';
+  const title = String(raw.title || raw.name || sourceId);
+  const categories = Array.isArray(raw.categories) ? raw.categories : undefined;
   return {
+    ...raw,
     sourceId,
     sourceType,
-    title: String(raw.title || raw.name || sourceId),
-    categories: Array.isArray(raw.categories) ? raw.categories : undefined,
-    ...raw,
+    title,
+    categories,
   };
 }
 
