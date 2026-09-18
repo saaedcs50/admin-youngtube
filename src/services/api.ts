@@ -419,7 +419,11 @@ export async function addChannel(item: {
 }): Promise<unknown> {
   return apiRequest('/api/admin/channels', {
     method: 'POST',
-    body: JSON.stringify({ action: 'add', item }),
+    body: JSON.stringify({
+      action: 'add',
+      channel: item,
+      item,
+    }),
   });
 }
 
@@ -431,7 +435,7 @@ export async function removeChannel(sourceId: string): Promise<unknown> {
 }
 
 export async function fetchAnnouncements(): Promise<AnnouncementItem[]> {
-  const res = await apiRequest<any>('/api/announcements');
+  const res = await apiRequest<any>('/api/announcements?all=true');
   let list: unknown[] = [];
   if (Array.isArray(res)) list = res;
   else if (res && Array.isArray(res.announcements)) list = res.announcements;
