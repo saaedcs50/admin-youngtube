@@ -19,6 +19,7 @@ import {
   Server,
   ShieldCheck,
   Square,
+  Terminal,
   Tv,
   Zap,
 } from 'lucide-react';
@@ -44,6 +45,7 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
   const [backfillTotalChannels, setBackfillTotalChannels] = useState<number | null>(null);
   const [skippedBatchesCount, setSkippedBatchesCount] = useState(0);
   const [activeTab, setActiveTab] = useState<'success' | 'failed'>('success');
+  const [lastBatchDebug, setLastBatchDebug] = useState<any>(null);
   const [recentProcessedChannels, setRecentProcessedChannels] = useState<
     Array<{
       sourceId: string;
@@ -116,6 +118,16 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
 
           try {
             res = await triggerBackfillAllBatch(shouldReset);
+            setLastBatchDebug({
+              sentReset: shouldReset,
+              cursorBefore: res.cursorBefore,
+              cursorAfter: res.cursorAfter,
+              totalChannels: res.totalChannels,
+              wrappedAround: res.wrappedAround,
+              processedCount: Array.isArray(res.processedChannels) ? res.processedChannels.length : 0,
+              failedCount: Array.isArray(res.failedChannels) ? res.failedChannels.length : 0,
+              timestamp: new Date().toLocaleTimeString('ar-EG'),
+            });
             break; // Batch call succeeded!
           } catch (batchErr: any) {
             console.warn(`Backfill batch attempt ${attempt}/3 failed:`, batchErr);
@@ -480,6 +492,24 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
             </div>
           )}
         </div>
+
+        {/* Diagnostic Debug Block */}
+        {lastBatchDebug !== null && (
+          <div className="p-3.5 rounded-xl bg-slate-950 text-slate-200 border border-slate-800 font-mono text-xs overflow-x-auto space-y-1.5">
+            <div className="flex items-center justify-between text-[11px] text-amber-400 font-bold border-b border-slate-800/80 pb-1">
+              <span className="flex items-center gap-1.5">
+                <Terminal className="w-3.5 h-3.5 text-amber-400" />
+                آخر استجابة للدفعة (Last Batch Response Diagnostics)
+              </span>
+              <span className="text-slate-400 font-normal text-[10px]">
+                {lastBatchDebug.timestamp}
+              </span>
+            </div>
+            <div className="text-slate-300 text-[11px] leading-relaxed break-all">
+              آخر استجابة: reset المُرسل = <span className={lastBatchDebug.sentReset ? 'text-emerald-400 font-bold' : 'text-slate-400'}>{String(lastBatchDebug.sentReset)}</span>, cursorBefore = <span className="text-purple-300 font-bold">{lastBatchDebug.cursorBefore}</span>, cursorAfter = <span className="text-purple-300 font-bold">{lastBatchDebug.cursorAfter}</span>, totalChannels = <span className="text-blue-300 font-bold">{lastBatchDebug.totalChannels}</span>, wrappedAround = <span className={lastBatchDebug.wrappedAround ? 'text-amber-400 font-bold' : 'text-slate-400'}>{String(lastBatchDebug.wrappedAround)}</span>, نجح = <span className="text-emerald-400 font-bold">{lastBatchDebug.processedCount}</span>, فشل = <span className={lastBatchDebug.failedCount > 0 ? 'text-rose-400 font-bold' : 'text-slate-400'}>{lastBatchDebug.failedCount}</span>, الوقت = <span className="text-slate-300">{lastBatchDebug.timestamp}</span>
+            </div>
+          </div>
+        )}
 
         {/* Live-updating small log of the last few processed channel titles & failed channels */}
         <div className="space-y-2">
