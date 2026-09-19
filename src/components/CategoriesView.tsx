@@ -36,6 +36,7 @@ import {
   saveCategory,
 } from '../services/api';
 import { CategoryItem, ChannelItem } from '../types';
+import { channelMatchesCategory } from '../utils/categoryAliases';
 import { ConfirmModal } from './ConfirmModal';
 
 // Available icons library for categories
@@ -103,18 +104,9 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({ onNotify }) => {
     loadData();
   }, []);
 
-  // Calculate channels count per category
+  // Calculate channels count per category using alias matching
   const getChannelCountForCategory = (cat: CategoryItem): number => {
-    const catNameLower = cat.name.toLowerCase();
-    const catIdLower = cat.id.toLowerCase();
-
-    return channels.filter((ch) => {
-      if (!Array.isArray(ch.categories)) return false;
-      return ch.categories.some((c) => {
-        const cLower = String(c).toLowerCase();
-        return cLower === catIdLower || cLower === catNameLower || catNameLower.includes(cLower);
-      });
-    }).length;
+    return channels.filter((ch) => channelMatchesCategory(ch.categories, cat.id, cat.name)).length;
   };
 
   const handleOpenAdd = () => {

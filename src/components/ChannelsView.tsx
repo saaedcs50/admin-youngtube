@@ -26,6 +26,7 @@ import {
   manageBlock,
 } from '../services/api';
 import { BlockItem, CategoryItem, ChannelItem, StatusResponse } from '../types';
+import { channelMatchesCategory } from '../utils/categoryAliases';
 import { parseYouTubeInput, resolveYouTubeMetadata } from '../utils/youtube';
 import { ConfirmModal } from './ConfirmModal';
 
@@ -248,10 +249,18 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
   const filteredChannels = channels.filter((c) => {
     // 1. Category filter
     if (selectedCategoryFilter !== 'all') {
-      const catList = (c.categories || []).map((x) => String(x).toLowerCase());
-      const targetFilter = selectedCategoryFilter.toLowerCase();
-      const hasCat = catList.some((cat) => cat === targetFilter || cat.includes(targetFilter));
-      if (!hasCat) return false;
+      const selectedCatObj = availableCategories.find(
+        (cat) =>
+          cat.id === selectedCategoryFilter ||
+          cat.name === selectedCategoryFilter ||
+          cat.name.toLowerCase().includes(selectedCategoryFilter.toLowerCase())
+      );
+      const catId = selectedCatObj ? selectedCatObj.id : selectedCategoryFilter;
+      const catName = selectedCatObj ? selectedCatObj.name : selectedCategoryFilter;
+
+      if (!channelMatchesCategory(c.categories, catId, catName)) {
+        return false;
+      }
     }
 
     // 2. Search query filter
@@ -360,8 +369,8 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
             >
               <option value="all">كل التصنيفات ({channels.length})</option>
               {availableCategories.map((cat) => (
-                <option key={cat.id} value={cat.name}>
-                  {cat.name} ({channels.filter((c) => (c.categories || []).includes(cat.name) || (c.categories || []).includes(cat.id)).length})
+                <option key={cat.id} value={cat.id}>
+                  {cat.name} ({channels.filter((c) => channelMatchesCategory(c.categories, cat.id, cat.name)).length})
                 </option>
               ))}
             </select>
