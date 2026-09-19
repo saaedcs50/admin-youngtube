@@ -146,6 +146,7 @@ export async function apiRequest<T = unknown>(
 
 export async function triggerBackfillAllBatch(): Promise<{
   processedChannels: any[];
+  failedChannels?: any[];
   cursorBefore: number;
   cursorAfter: number;
   totalChannels: number;
@@ -153,6 +154,7 @@ export async function triggerBackfillAllBatch(): Promise<{
 }> {
   return apiRequest<{
     processedChannels: any[];
+    failedChannels?: any[];
     cursorBefore: number;
     cursorAfter: number;
     totalChannels: number;

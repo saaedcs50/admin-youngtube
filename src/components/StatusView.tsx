@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Activity,
+  AlertCircle,
+  AlertTriangle,
   CheckCircle2,
   Clock,
   Copy,
@@ -40,6 +42,8 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
   const [isBackfillStopping, setIsBackfillStopping] = useState(false);
   const [backfillProcessedCount, setBackfillProcessedCount] = useState(0);
   const [backfillTotalChannels, setBackfillTotalChannels] = useState<number | null>(null);
+  const [skippedBatchesCount, setSkippedBatchesCount] = useState(0);
+  const [activeTab, setActiveTab] = useState<'success' | 'failed'>('success');
   const [recentProcessedChannels, setRecentProcessedChannels] = useState<
     Array<{
       sourceId: string;
@@ -48,8 +52,25 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
       timestamp: string;
     }>
   >([]);
+  const [failedChannelsLog, setFailedChannelsLog] = useState<
+    Array<{
+      sourceId: string;
+      title: string;
+      error?: string;
+      timestamp: string;
+    }>
+  >([]);
 
   const stopBackfillRef = useRef(false);
+
+  // Helper for interruptible sleep
+  const waitWithCancellation = async (ms: number) => {
+    const start = Date.now();
+    while (Date.now() - start < ms) {
+      if (stopBackfillRef.current) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  };
 
   // Clean up on unmount
   useEffect(() => {
@@ -64,29 +85,91 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
     setIsBackfillStopping(false);
     stopBackfillRef.current = false;
     setBackfillProcessedCount(0);
+    setSkippedBatchesCount(0);
     setRecentProcessedChannels([]);
+    setFailedChannelsLog([]);
+    setActiveTab('success');
 
-    onNotify('info', 'بدء Backfill الأرشيف العميق', 'جاري جلب الفيديوهات على دفعات (5 قنوات في كل دفعة)...');
+    onNotify('info', 'بدء Backfill الأرشيف العميق', 'جاري جلب الفيديوهات على دفعات مع دعم إعادة المحاولة التلقائية...');
+
+    let accumulatedCount = 0;
+    let skippedBatches = 0;
+    let consecutiveFailedBatches = 0;
 
     try {
-      let accumulatedCount = 0;
       while (!stopBackfillRef.current) {
-        const res = await triggerBackfillAllBatch();
+        let res: {
+          processedChannels: any[];
+          failedChannels?: any[];
+          cursorBefore: number;
+          cursorAfter: number;
+          totalChannels: number;
+          wrappedAround: boolean;
+        } | null = null;
 
-        const batchChannels = Array.isArray(res?.processedChannels) ? res.processedChannels : [];
+        // Try up to 3 total attempts for the current batch
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          if (stopBackfillRef.current) break;
+
+          try {
+            res = await triggerBackfillAllBatch();
+            break; // Batch call succeeded!
+          } catch (batchErr: any) {
+            console.warn(`Backfill batch attempt ${attempt}/3 failed:`, batchErr);
+            if (stopBackfillRef.current) break;
+
+            if (attempt < 3) {
+              // Wait 3 seconds before next retry of the same batch
+              await waitWithCancellation(3000);
+            }
+          }
+        }
+
+        // If stopped during requests or retries
+        if (stopBackfillRef.current) {
+          onNotify('warning', 'تم إيقاف Backfill', `توقفت العملية عند معالجة ${accumulatedCount} قناة.`);
+          break;
+        }
+
+        // If all 3 attempts failed for this batch
+        if (!res) {
+          skippedBatches++;
+          setSkippedBatchesCount(skippedBatches);
+          consecutiveFailedBatches++;
+
+          if (consecutiveFailedBatches >= 3) {
+            onNotify(
+              'error',
+              'توقف Backfill بسبب خطأ متكرر',
+              'تعذرت معالجة 3 دفعات متتالية بعد استنفاد محاولات الإعادة (3 محاولات لكل دفعة). يرجى التحقق من اتصال الخادم ومفتاح المشرف.'
+            );
+            break;
+          }
+
+          // Non-fatal: wait 3 seconds before trying next batch
+          await waitWithCancellation(3000);
+          continue;
+        }
+
+        // Batch succeeded -> reset consecutive failures counter
+        consecutiveFailedBatches = 0;
+
+        const batchChannels = Array.isArray(res.processedChannels) ? res.processedChannels : [];
         accumulatedCount += batchChannels.length;
         setBackfillProcessedCount(accumulatedCount);
 
-        if (typeof res?.totalChannels === 'number') {
+        if (typeof res.totalChannels === 'number') {
           setBackfillTotalChannels(res.totalChannels);
         }
 
+        const nowStr = new Date().toLocaleTimeString('ar-EG', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        });
+
+        // Record successful channels (limit to latest 10, newest first)
         if (batchChannels.length > 0) {
-          const nowStr = new Date().toLocaleTimeString('ar-EG', {
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-          });
           const mapped = batchChannels.map((c: any) => ({
             sourceId: String(c.sourceId || c.id || ''),
             title: String(c.title || c.name || c.sourceId || 'قناة بدون اسم'),
@@ -100,24 +183,39 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
           });
         }
 
+        // Record failed channels in this batch (if returned in Worker response)
+        const failedInBatch = Array.isArray(res.failedChannels) ? res.failedChannels : [];
+        if (failedInBatch.length > 0) {
+          const mappedFailed = failedInBatch.map((c: any) => ({
+            sourceId: String(c.sourceId || c.id || ''),
+            title: String(c.title || c.name || c.sourceId || 'قناة بدون اسم'),
+            error: String(c.error || c.message || 'تعذر جلب الأرشيف'),
+            timestamp: nowStr,
+          }));
+
+          setFailedChannelsLog((prev) => {
+            const combined = [...mappedFailed.reverse(), ...prev];
+            return combined.slice(0, 10);
+          });
+        }
+
         // Check if full pass finished
-        if (res?.wrappedAround) {
-          onNotify(
-            'success',
-            'اكتمل Backfill لكل القنوات! ✅',
-            `تم الانتهاء من فحص وتحديث أرشيف جميع القنوات (${res.totalChannels || accumulatedCount} قناة).`
-          );
+        if (res.wrappedAround) {
+          const summaryDesc =
+            skippedBatches > 0
+              ? `تم الانتهاء من فحص وتحديث أرشيف جميع القنوات (${res.totalChannels || accumulatedCount} قناة) مع تخطي ${skippedBatches} دفعة بسبب مشاكل شبكة.`
+              : `تم الانتهاء من فحص وتحديث أرشيف جميع القنوات (${res.totalChannels || accumulatedCount} قناة).`;
+          onNotify('success', 'اكتمل Backfill لكل القنوات! ✅', summaryDesc);
           break;
         }
 
-        // If stopped during request
         if (stopBackfillRef.current) {
           onNotify('warning', 'تم إيقاف Backfill', `توقفت العملية عند معالجة ${accumulatedCount} قناة.`);
           break;
         }
 
         // Wait ~1.5s delay between batch calls
-        await new Promise((resolve) => setTimeout(resolve, 1500));
+        await waitWithCancellation(1500);
 
         if (stopBackfillRef.current) {
           onNotify('warning', 'تم إيقاف Backfill', `توقفت العملية عند معالجة ${accumulatedCount} قناة.`);
@@ -138,7 +236,7 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
     if (!isBackfillRunning) return;
     setIsBackfillStopping(true);
     stopBackfillRef.current = true;
-    onNotify('info', 'جاري إيقاف العملية...', 'سيتم التوقف فور اكتمال الدفعة الحالية الجارية.');
+    onNotify('info', 'جاري إيقاف العملية...', 'سيتم التوقف فور انتهاء المحاولة الحالية.');
   };
 
   const loadStatus = async () => {
@@ -339,7 +437,7 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
 
         {/* Progress Display */}
         <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 space-y-2.5">
-          <div className="flex items-center justify-between text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
             <div className="flex items-center gap-2">
               <span className="font-semibold text-slate-700 dark:text-slate-300">
                 حالة التقدم:
@@ -367,35 +465,109 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
               />
             </div>
           )}
+
+          {/* Secondary line when batches were skipped due to network/timeout issues */}
+          {skippedBatchesCount > 0 && (
+            <div className="flex items-center gap-1.5 text-[11px] font-medium text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-2.5 py-1 rounded-lg border border-amber-200/60 dark:border-amber-900/40">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-amber-500" />
+              <span>تم تخطي {skippedBatchesCount} دفعة بسبب مشاكل شبكة مؤقتة</span>
+            </div>
+          )}
         </div>
 
-        {/* Live-updating small log of the last few processed channel titles (most recent 10) */}
+        {/* Live-updating small log of the last few processed channel titles & failed channels */}
         <div className="space-y-2">
-          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-            <div className="flex items-center gap-1.5 font-semibold">
-              <ListVideo className="w-3.5 h-3.5 text-purple-500" />
-              <span>آخر القنوات المعالجة (أحدث 10):</span>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setActiveTab('success')}
+                className={`flex items-center gap-1.5 font-semibold px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
+                  activeTab === 'success'
+                    ? 'bg-purple-100 dark:bg-purple-950/80 text-purple-700 dark:text-purple-300'
+                    : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400'
+                }`}
+              >
+                <ListVideo className="w-3.5 h-3.5 text-purple-500" />
+                <span>آخر القنوات المعالجة (أحدث 10)</span>
+                {recentProcessedChannels.length > 0 && (
+                  <span className="font-mono text-[10px] px-1.5 py-0.2 bg-purple-200/60 dark:bg-purple-900/60 rounded-full">
+                    {recentProcessedChannels.length}
+                  </span>
+                )}
+              </button>
+
+              {failedChannelsLog.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('failed')}
+                  className={`flex items-center gap-1.5 font-semibold px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
+                    activeTab === 'failed'
+                      ? 'bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300'
+                      : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400'
+                  }`}
+                >
+                  <AlertCircle className="w-3.5 h-3.5 text-rose-500" />
+                  <span>تعذر جلبها ({failedChannelsLog.length})</span>
+                </button>
+              )}
             </div>
-            {recentProcessedChannels.length > 0 && (
+
+            {activeTab === 'success' && recentProcessedChannels.length > 0 && (
               <span className="font-mono text-[11px]">
                 {recentProcessedChannels.length} قنوات مسجلة
               </span>
             )}
           </div>
 
-          {recentProcessedChannels.length === 0 ? (
-            <div className="p-4 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 text-center text-xs text-slate-400 dark:text-slate-500">
-              لم تبدأ المعالجة بعد. اضغط على &quot;بدء&quot; لمعالجة دفعات القنوات.
-            </div>
+          {activeTab === 'success' ? (
+            recentProcessedChannels.length === 0 ? (
+              <div className="p-4 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 text-center text-xs text-slate-400 dark:text-slate-500">
+                لم تبدأ المعالجة بعد. اضغط على &quot;بدء&quot; لمعالجة دفعات القنوات.
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-100 dark:divide-slate-800/80 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-white dark:bg-slate-900/40">
+                {recentProcessedChannels.map((item, idx) => (
+                  <div
+                    key={`${item.sourceId}-${idx}-${item.timestamp}`}
+                    className="px-3.5 py-2.5 flex items-center justify-between gap-3 text-xs hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className="w-5 h-5 rounded-md bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 flex items-center justify-center text-[10px] font-mono font-bold shrink-0">
+                        {idx + 1}
+                      </span>
+                      <span className="font-medium text-slate-900 dark:text-slate-100 truncate">
+                        {item.title}
+                      </span>
+                      {item.sourceId && (
+                        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500 hidden sm:inline truncate">
+                          ({item.sourceId})
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-3 shrink-0">
+                      <span className="px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 font-mono text-[11px] font-semibold flex items-center gap-1">
+                        <Film className="w-3 h-3" />
+                        {item.videoCount} فيديو
+                      </span>
+                      <span className="text-[10px] font-mono text-slate-400">
+                        {item.timestamp}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
           ) : (
             <div className="divide-y divide-slate-100 dark:divide-slate-800/80 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-white dark:bg-slate-900/40">
-              {recentProcessedChannels.map((item, idx) => (
+              {failedChannelsLog.map((item, idx) => (
                 <div
                   key={`${item.sourceId}-${idx}-${item.timestamp}`}
-                  className="px-3.5 py-2.5 flex items-center justify-between gap-3 text-xs hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
+                  className="px-3.5 py-2.5 flex items-center justify-between gap-3 text-xs hover:bg-rose-50/50 dark:hover:bg-rose-950/20 transition-colors"
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
-                    <span className="w-5 h-5 rounded-md bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 flex items-center justify-center text-[10px] font-mono font-bold shrink-0">
+                    <span className="w-5 h-5 rounded-md bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center text-[10px] font-mono font-bold shrink-0">
                       {idx + 1}
                     </span>
                     <span className="font-medium text-slate-900 dark:text-slate-100 truncate">
@@ -409,9 +581,9 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
                   </div>
 
                   <div className="flex items-center gap-3 shrink-0">
-                    <span className="px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 font-mono text-[11px] font-semibold flex items-center gap-1">
-                      <Film className="w-3 h-3" />
-                      {item.videoCount} فيديو
+                    <span className="px-2 py-0.5 rounded-md bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 font-mono text-[11px] font-semibold flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" />
+                      {item.error || 'تعذر الجلب'}
                     </span>
                     <span className="text-[10px] font-mono text-slate-400">
                       {item.timestamp}
