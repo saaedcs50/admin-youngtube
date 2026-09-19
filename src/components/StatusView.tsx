@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Activity,
   CheckCircle2,
@@ -6,16 +6,21 @@ import {
   Copy,
   Cpu,
   Database,
+  Film,
   Globe,
   HardDrive,
+  Layers,
+  ListVideo,
   Loader2,
+  Play,
   RefreshCw,
   Server,
   ShieldCheck,
+  Square,
   Tv,
   Zap,
 } from 'lucide-react';
-import { fetchStatus, getWorkerUrl } from '../services/api';
+import { fetchStatus, getWorkerUrl, triggerBackfillAllBatch } from '../services/api';
 import { StatusResponse } from '../types';
 import { formatTimestamp } from '../utils/formatters';
 
@@ -29,6 +34,112 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
   const [latency, setLatency] = useState<number | null>(null);
   const [lastCheck, setLastCheck] = useState<Date | null>(null);
   const [copied, setCopied] = useState(false);
+
+  // Backfill All Channels state
+  const [isBackfillRunning, setIsBackfillRunning] = useState(false);
+  const [isBackfillStopping, setIsBackfillStopping] = useState(false);
+  const [backfillProcessedCount, setBackfillProcessedCount] = useState(0);
+  const [backfillTotalChannels, setBackfillTotalChannels] = useState<number | null>(null);
+  const [recentProcessedChannels, setRecentProcessedChannels] = useState<
+    Array<{
+      sourceId: string;
+      title: string;
+      videoCount: number;
+      timestamp: string;
+    }>
+  >([]);
+
+  const stopBackfillRef = useRef(false);
+
+  // Clean up on unmount
+  useEffect(() => {
+    return () => {
+      stopBackfillRef.current = true;
+    };
+  }, []);
+
+  const handleStartBackfill = async () => {
+    if (isBackfillRunning) return;
+    setIsBackfillRunning(true);
+    setIsBackfillStopping(false);
+    stopBackfillRef.current = false;
+    setBackfillProcessedCount(0);
+    setRecentProcessedChannels([]);
+
+    onNotify('info', 'بدء Backfill الأرشيف العميق', 'جاري جلب الفيديوهات على دفعات (5 قنوات في كل دفعة)...');
+
+    try {
+      let accumulatedCount = 0;
+      while (!stopBackfillRef.current) {
+        const res = await triggerBackfillAllBatch();
+
+        const batchChannels = Array.isArray(res?.processedChannels) ? res.processedChannels : [];
+        accumulatedCount += batchChannels.length;
+        setBackfillProcessedCount(accumulatedCount);
+
+        if (typeof res?.totalChannels === 'number') {
+          setBackfillTotalChannels(res.totalChannels);
+        }
+
+        if (batchChannels.length > 0) {
+          const nowStr = new Date().toLocaleTimeString('ar-EG', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+          });
+          const mapped = batchChannels.map((c: any) => ({
+            sourceId: String(c.sourceId || c.id || ''),
+            title: String(c.title || c.name || c.sourceId || 'قناة بدون اسم'),
+            videoCount: Number(c.videoCount ?? c.count ?? 0),
+            timestamp: nowStr,
+          }));
+
+          setRecentProcessedChannels((prev) => {
+            const combined = [...mapped.reverse(), ...prev];
+            return combined.slice(0, 10);
+          });
+        }
+
+        // Check if full pass finished
+        if (res?.wrappedAround) {
+          onNotify(
+            'success',
+            'اكتمل Backfill لكل القنوات! ✅',
+            `تم الانتهاء من فحص وتحديث أرشيف جميع القنوات (${res.totalChannels || accumulatedCount} قناة).`
+          );
+          break;
+        }
+
+        // If stopped during request
+        if (stopBackfillRef.current) {
+          onNotify('warning', 'تم إيقاف Backfill', `توقفت العملية عند معالجة ${accumulatedCount} قناة.`);
+          break;
+        }
+
+        // Wait ~1.5s delay between batch calls
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+
+        if (stopBackfillRef.current) {
+          onNotify('warning', 'تم إيقاف Backfill', `توقفت العملية عند معالجة ${accumulatedCount} قناة.`);
+          break;
+        }
+      }
+    } catch (err: any) {
+      console.error('Error in backfill batch loop:', err);
+      onNotify('error', 'فشل أثناء Backfill', err?.message || 'خطأ أثناء تنفيذ دفعة Backfill.');
+    } finally {
+      setIsBackfillRunning(false);
+      setIsBackfillStopping(false);
+      stopBackfillRef.current = false;
+    }
+  };
+
+  const handleStopBackfill = () => {
+    if (!isBackfillRunning) return;
+    setIsBackfillStopping(true);
+    stopBackfillRef.current = true;
+    onNotify('info', 'جاري إيقاف العملية...', 'سيتم التوقف فور اكتمال الدفعة الحالية الجارية.');
+  };
 
   const loadStatus = async () => {
     setIsLoading(true);
@@ -173,6 +284,143 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
           <div className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
             النسخة: <span className="font-mono">{status?.version || 'production'}</span>
           </div>
+        </div>
+      </div>
+
+      {/* Deep Backfill Section */}
+      <div id="deep-backfill-card" className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs p-6 space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-xl bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400">
+                <Layers className="w-5 h-5" />
+              </div>
+              <h3 className="font-bold text-base text-slate-900 dark:text-slate-100">
+                Backfill عميق لكل القنوات
+              </h3>
+              {isBackfillRunning && (
+                <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 animate-pulse">
+                  <span className="w-2 h-2 rounded-full bg-purple-500 animate-ping" />
+                  {isBackfillStopping ? 'جاري الإيقاف...' : 'جاري المعالجة على دفعات...'}
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed max-w-2xl">
+              يقوم هذا الإجراء بجلب أرشيف أعمق (حتى 1000 فيديو) لكل قناة على دفعات، للسماح بالبحث العميق داخل الأرشيف من تطبيق الأطفال.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2.5 shrink-0 self-end sm:self-auto">
+            <button
+              id="backfill-start-btn"
+              onClick={handleStartBackfill}
+              disabled={isBackfillRunning}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold transition-all shadow-sm shadow-purple-600/20 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isBackfillRunning && !isBackfillStopping ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Play className="w-3.5 h-3.5 fill-current" />
+              )}
+              <span>بدء</span>
+            </button>
+
+            <button
+              id="backfill-stop-btn"
+              onClick={handleStopBackfill}
+              disabled={!isBackfillRunning || isBackfillStopping}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-950/80 text-rose-700 dark:text-rose-300 text-xs font-bold transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Square className="w-3.5 h-3.5 fill-current" />
+              <span>{isBackfillStopping ? 'جاري الإيقاف...' : 'إيقاف'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Progress Display */}
+        <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 space-y-2.5">
+          <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-slate-700 dark:text-slate-300">
+                حالة التقدم:
+              </span>
+              <span className="font-mono font-bold text-purple-600 dark:text-purple-400">
+                {backfillTotalChannels !== null
+                  ? `تمت معالجة ${backfillProcessedCount} من ${backfillTotalChannels} قناة`
+                  : `تمت معالجة ${backfillProcessedCount} قناة`}
+              </span>
+            </div>
+            {backfillTotalChannels !== null && backfillTotalChannels > 0 && (
+              <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
+                {Math.min(100, Math.round((backfillProcessedCount / backfillTotalChannels) * 100))}%
+              </span>
+            )}
+          </div>
+
+          {backfillTotalChannels !== null && backfillTotalChannels > 0 && (
+            <div className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-purple-600 dark:bg-purple-500 rounded-full transition-all duration-300 ease-out"
+                style={{
+                  width: `${Math.min(100, Math.max(0, (backfillProcessedCount / backfillTotalChannels) * 100))}%`,
+                }}
+              />
+            </div>
+          )}
+        </div>
+
+        {/* Live-updating small log of the last few processed channel titles (most recent 10) */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+            <div className="flex items-center gap-1.5 font-semibold">
+              <ListVideo className="w-3.5 h-3.5 text-purple-500" />
+              <span>آخر القنوات المعالجة (أحدث 10):</span>
+            </div>
+            {recentProcessedChannels.length > 0 && (
+              <span className="font-mono text-[11px]">
+                {recentProcessedChannels.length} قنوات مسجلة
+              </span>
+            )}
+          </div>
+
+          {recentProcessedChannels.length === 0 ? (
+            <div className="p-4 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 text-center text-xs text-slate-400 dark:text-slate-500">
+              لم تبدأ المعالجة بعد. اضغط على &quot;بدء&quot; لمعالجة دفعات القنوات.
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-100 dark:divide-slate-800/80 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-white dark:bg-slate-900/40">
+              {recentProcessedChannels.map((item, idx) => (
+                <div
+                  key={`${item.sourceId}-${idx}-${item.timestamp}`}
+                  className="px-3.5 py-2.5 flex items-center justify-between gap-3 text-xs hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="w-5 h-5 rounded-md bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 flex items-center justify-center text-[10px] font-mono font-bold shrink-0">
+                      {idx + 1}
+                    </span>
+                    <span className="font-medium text-slate-900 dark:text-slate-100 truncate">
+                      {item.title}
+                    </span>
+                    {item.sourceId && (
+                      <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500 hidden sm:inline truncate">
+                        ({item.sourceId})
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-3 shrink-0">
+                    <span className="px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 font-mono text-[11px] font-semibold flex items-center gap-1">
+                      <Film className="w-3 h-3" />
+                      {item.videoCount} فيديو
+                    </span>
+                    <span className="text-[10px] font-mono text-slate-400">
+                      {item.timestamp}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

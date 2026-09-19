@@ -144,6 +144,24 @@ export async function apiRequest<T = unknown>(
   }
 }
 
+export async function triggerBackfillAllBatch(): Promise<{
+  processedChannels: any[];
+  cursorBefore: number;
+  cursorAfter: number;
+  totalChannels: number;
+  wrappedAround: boolean;
+}> {
+  return apiRequest<{
+    processedChannels: any[];
+    cursorBefore: number;
+    cursorAfter: number;
+    totalChannels: number;
+    wrappedAround: boolean;
+  }>('/api/admin/backfill-all-batch', {
+    method: 'POST',
+  });
+}
+
 export async function fetchStatus(): Promise<StatusResponse> {
   return apiRequest<StatusResponse>('/api/admin/status');
 }
