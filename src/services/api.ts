@@ -144,7 +144,7 @@ export async function apiRequest<T = unknown>(
   }
 }
 
-export async function triggerBackfillAllBatch(): Promise<{
+export async function triggerBackfillAllBatch(reset: boolean = false): Promise<{
   processedChannels: any[];
   failedChannels?: any[];
   cursorBefore: number;
@@ -161,6 +161,7 @@ export async function triggerBackfillAllBatch(): Promise<{
     wrappedAround: boolean;
   }>('/api/admin/backfill-all-batch', {
     method: 'POST',
+    body: JSON.stringify({ reset }),
   });
 }
 

@@ -95,6 +95,7 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
     let accumulatedCount = 0;
     let skippedBatches = 0;
     let consecutiveFailedBatches = 0;
+    let isFirstCall = true;
 
     try {
       while (!stopBackfillRef.current) {
@@ -107,12 +108,14 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
           wrappedAround: boolean;
         } | null = null;
 
+        const shouldReset = isFirstCall;
+
         // Try up to 3 total attempts for the current batch
         for (let attempt = 1; attempt <= 3; attempt++) {
           if (stopBackfillRef.current) break;
 
           try {
-            res = await triggerBackfillAllBatch();
+            res = await triggerBackfillAllBatch(shouldReset);
             break; // Batch call succeeded!
           } catch (batchErr: any) {
             console.warn(`Backfill batch attempt ${attempt}/3 failed:`, batchErr);
@@ -124,6 +127,9 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
             }
           }
         }
+
+        // Mark first call as completed so subsequent batches do not reset
+        isFirstCall = false;
 
         // If stopped during requests or retries
         if (stopBackfillRef.current) {
