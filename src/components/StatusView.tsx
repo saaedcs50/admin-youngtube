@@ -126,6 +126,7 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
               wrappedAround: res.wrappedAround,
               processedCount: Array.isArray(res.processedChannels) ? res.processedChannels.length : 0,
               failedCount: Array.isArray(res.failedChannels) ? res.failedChannels.length : 0,
+              failedChannelsDetail: Array.isArray(res.failedChannels) ? res.failedChannels : [],
               timestamp: new Date().toLocaleTimeString('ar-EG'),
             });
             break; // Batch call succeeded!
@@ -508,6 +509,25 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
             <div className="text-slate-300 text-[11px] leading-relaxed break-all">
               آخر استجابة: reset المُرسل = <span className={lastBatchDebug.sentReset ? 'text-emerald-400 font-bold' : 'text-slate-400'}>{String(lastBatchDebug.sentReset)}</span>, cursorBefore = <span className="text-purple-300 font-bold">{lastBatchDebug.cursorBefore}</span>, cursorAfter = <span className="text-purple-300 font-bold">{lastBatchDebug.cursorAfter}</span>, totalChannels = <span className="text-blue-300 font-bold">{lastBatchDebug.totalChannels}</span>, wrappedAround = <span className={lastBatchDebug.wrappedAround ? 'text-amber-400 font-bold' : 'text-slate-400'}>{String(lastBatchDebug.wrappedAround)}</span>, نجح = <span className="text-emerald-400 font-bold">{lastBatchDebug.processedCount}</span>, فشل = <span className={lastBatchDebug.failedCount > 0 ? 'text-rose-400 font-bold' : 'text-slate-400'}>{lastBatchDebug.failedCount}</span>, الوقت = <span className="text-slate-300">{lastBatchDebug.timestamp}</span>
             </div>
+
+            {Array.isArray(lastBatchDebug.failedChannelsDetail) && lastBatchDebug.failedChannelsDetail.length > 0 && (
+              <div className="pt-1.5 mt-1.5 border-t border-slate-800/80 space-y-1 text-[11px] text-rose-300/90 font-mono">
+                {lastBatchDebug.failedChannelsDetail.map((fc: any, idx: number) => {
+                  const idOrTitle = fc.sourceId || fc.title || `قناة #${idx + 1}`;
+                  const errType = fc.error || 'other';
+                  const extra = fc.status !== undefined
+                    ? `(status: ${fc.status})`
+                    : fc.message
+                    ? `— ${fc.message}`
+                    : '';
+                  return (
+                    <div key={`${fc.sourceId || idx}-${idx}`} className="break-all">
+                      - {idOrTitle}: {errType} {extra}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
