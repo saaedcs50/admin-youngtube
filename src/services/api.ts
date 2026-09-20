@@ -165,6 +165,41 @@ export async function triggerBackfillAllBatch(reset: boolean = false): Promise<{
   });
 }
 
+export async function triggerCleanupDeadVideosBatch(reset: boolean = false): Promise<{
+  channelsProcessed: Array<{
+    sourceId: string;
+    title: string;
+    videosChecked: number;
+    deadVideosRemoved: number;
+  }>;
+  totalVideosChecked: number;
+  totalDeadVideosRemoved: number;
+  cursorBefore: number;
+  cursorAfter: number;
+  totalChannels: number;
+  wrappedAround: boolean;
+  failedChannels?: any[];
+}> {
+  return apiRequest<{
+    channelsProcessed: Array<{
+      sourceId: string;
+      title: string;
+      videosChecked: number;
+      deadVideosRemoved: number;
+    }>;
+    totalVideosChecked: number;
+    totalDeadVideosRemoved: number;
+    cursorBefore: number;
+    cursorAfter: number;
+    totalChannels: number;
+    wrappedAround: boolean;
+    failedChannels?: any[];
+  }>('/api/admin/cleanup-dead-videos-batch', {
+    method: 'POST',
+    body: JSON.stringify({ reset }),
+  });
+}
+
 export async function fetchStatus(): Promise<StatusResponse> {
   return apiRequest<StatusResponse>('/api/admin/status');
 }
