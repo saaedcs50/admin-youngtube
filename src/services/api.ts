@@ -502,6 +502,47 @@ export async function removeChannel(sourceId: string): Promise<unknown> {
   });
 }
 
+export async function fetchChannelArchive(sourceId: string): Promise<{
+  sourceId: string;
+  sourceType?: string;
+  title?: string;
+  items?: any[];
+  videos?: any[];
+  [key: string]: any;
+}> {
+  return apiRequest(`/api/channel-archive?id=${encodeURIComponent(sourceId)}`);
+}
+
+export async function deleteChannelVideo(sourceId: string, videoId: string): Promise<{
+  ok?: boolean;
+  success?: boolean;
+  message?: string;
+  [key: string]: any;
+}> {
+  return apiRequest('/api/admin/channel-video-delete', {
+    method: 'POST',
+    body: JSON.stringify({ sourceId, videoId }),
+  });
+}
+
+export async function triggerChannelBackfill(
+  sourceId: string,
+  sourceType: string,
+  title: string
+): Promise<{
+  ok?: boolean;
+  success?: boolean;
+  message?: string;
+  count?: number;
+  added?: number;
+  [key: string]: any;
+}> {
+  return apiRequest('/api/channel-backfill', {
+    method: 'POST',
+    body: JSON.stringify({ sourceId, sourceType, title }),
+  });
+}
+
 export async function fetchAnnouncements(): Promise<AnnouncementItem[]> {
   const res = await apiRequest<any>('/api/announcements?all=true');
   let list: unknown[] = [];

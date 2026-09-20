@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  Archive,
   Ban,
   CheckCircle2,
   FolderPlus,
@@ -28,6 +29,7 @@ import {
 import { BlockItem, CategoryItem, ChannelItem, StatusResponse } from '../types';
 import { channelMatchesCategory } from '../utils/categoryAliases';
 import { parseYouTubeInput, resolveYouTubeMetadata } from '../utils/youtube';
+import { ChannelArchiveManager } from './ChannelArchiveManager';
 import { ConfirmModal } from './ConfirmModal';
 
 interface ChannelsViewProps {
@@ -60,6 +62,13 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
     action: 'block' | 'unblock';
   } | null>(null);
   const [isSubmittingBlock, setIsSubmittingBlock] = useState(false);
+
+  // Archive Manager Modal State
+  const [archiveTarget, setArchiveTarget] = useState<{
+    sourceId: string;
+    sourceType: 'channel' | 'playlist' | string;
+    title: string;
+  } | null>(null);
 
   const loadData = async () => {
     setIsLoading(true);
@@ -467,9 +476,22 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
                       </td>
                       <td className="py-3.5 px-4">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-bold text-slate-900 dark:text-slate-100 text-sm">
-                            {c.title || 'بدون عنوان'}
-                          </span>
+                          <button
+                            id={`manage-archive-btn-${c.sourceId}`}
+                            type="button"
+                            onClick={() =>
+                              setArchiveTarget({
+                                sourceId: c.sourceId,
+                                sourceType: c.sourceType || 'channel',
+                                title: c.title || 'بدون عنوان',
+                              })
+                            }
+                            className="font-bold text-slate-900 dark:text-slate-100 text-sm hover:text-amber-600 dark:hover:text-amber-400 transition-colors flex items-center gap-1.5 cursor-pointer text-right group"
+                            title="اضغط لإدارة أرشيف وفيديوهات القناة"
+                          >
+                            <span>{c.title || 'بدون عنوان'}</span>
+                            <Archive className="w-3.5 h-3.5 text-slate-400 group-hover:text-amber-600 transition-colors shrink-0" />
+                          </button>
                           {isBlocked && (
                             <span
                               id={`channel-blocked-badge-${c.sourceId}`}
@@ -761,6 +783,16 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
         onConfirm={handleConfirmBlockToggle}
         onCancel={() => setBlockTarget(null)}
       />
+      {/* Channel Archive Manager Overlay */}
+      {archiveTarget && (
+        <ChannelArchiveManager
+          sourceId={archiveTarget.sourceId}
+          sourceType={archiveTarget.sourceType}
+          channelTitle={archiveTarget.title}
+          onClose={() => setArchiveTarget(null)}
+          onNotify={onNotify}
+        />
+      )}
     </div>
   );
 };
