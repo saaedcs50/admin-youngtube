@@ -54,6 +54,11 @@ export function resetWorkerUrl(): void {
   localStorage.removeItem(STORAGE_KEY_WORKER_URL);
 }
 
+// SECURITY NOTE: this key grants full admin access to the entire backend.
+// This plaintext-in-browser-storage approach is a known interim tradeoff;
+// a short-lived session-token model is planned as a follow-up. Do not weaken this
+// further (e.g. do not add a 'copy key' button, do not log this value, do not
+// send it anywhere except the Authorization header to the configured Worker URL).
 export function getAdminKey(): string | null {
   if (typeof window === 'undefined') return null;
   try {
@@ -68,6 +73,11 @@ export function isRemembered(): boolean {
   return localStorage.getItem(STORAGE_KEY_REMEMBER) === 'true';
 }
 
+// SECURITY NOTE: this key grants full admin access to the entire backend.
+// This plaintext-in-browser-storage approach is a known interim tradeoff;
+// a short-lived session-token model is planned as a follow-up. Do not weaken this
+// further (e.g. do not add a 'copy key' button, do not log this value, do not
+// send it anywhere except the Authorization header to the configured Worker URL).
 export function saveAdminKey(key: string, remember: boolean): void {
   const trimmed = key.trim();
   sessionStorage.setItem(STORAGE_KEY_ADMIN, trimmed);
