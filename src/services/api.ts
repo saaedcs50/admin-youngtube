@@ -510,7 +510,7 @@ export async function fetchChannelArchive(sourceId: string): Promise<{
   videos?: any[];
   [key: string]: any;
 }> {
-  return apiRequest(`/api/channel-archive?id=${encodeURIComponent(sourceId)}`);
+  return apiRequest(`/api/channel-archive?id=${encodeURIComponent(sourceId)}&max=2000`);
 }
 
 export async function deleteChannelVideo(sourceId: string, videoId: string): Promise<{
