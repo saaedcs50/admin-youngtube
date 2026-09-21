@@ -105,6 +105,7 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
   const [scanVideosCheckedTotal, setScanVideosCheckedTotal] = useState(0);
   const [scanRemovedShortDurationTotal, setScanRemovedShortDurationTotal] = useState(0);
   const [scanRemovedPortraitTotal, setScanRemovedPortraitTotal] = useState(0);
+  const [scanCurrentChannelTitle, setScanCurrentChannelTitle] = useState<string | null>(null);
   const [scanActiveTab, setScanActiveTab] = useState<'success' | 'failed'>('success');
   const [scanLastBatchDebug, setScanLastBatchDebug] = useState<any>(null);
   const [recentScanChannels, setRecentScanChannels] = useState<
@@ -586,6 +587,7 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
     let skippedBatches = 0;
     let consecutiveFailedBatches = 0;
     let isFirstCall = true;
+    setScanCurrentChannelTitle(null);
 
     try {
       while (!stopScanRef.current) {
@@ -604,6 +606,8 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
           cursorAfter: number;
           totalChannels: number;
           wrappedAround: boolean;
+          channelComplete?: boolean;
+          title?: string;
           failedChannels?: any[];
         } | null = null;
 
@@ -621,6 +625,8 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
               cursorAfter: res.cursorAfter,
               totalChannels: res.totalChannels,
               wrappedAround: res.wrappedAround,
+              channelComplete: res.channelComplete,
+              title: res.title,
               totalVideosChecked: res.totalVideosChecked,
               totalRemovedShortDuration: res.totalRemovedShortDuration,
               totalRemovedPortrait: res.totalRemovedPortrait,
@@ -678,8 +684,23 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
         consecutiveFailedBatches = 0;
 
         const batchChannels = Array.isArray(res.channelsProcessed) ? res.channelsProcessed : [];
-        accumulatedChannels += batchChannels.length;
-        setScanProcessedCount(accumulatedChannels);
+
+        // Check channel completion state
+        const isChannelComplete = res.channelComplete === true || (res.channelComplete === undefined && batchChannels.length > 0);
+        const currentTitle = res.title || batchChannels[0]?.title || '';
+
+        // If current channel is still mid-progress (channelComplete === false), display active title
+        if (res.channelComplete === false) {
+          setScanCurrentChannelTitle(currentTitle || 'قناة جاري معالجتها');
+        } else {
+          setScanCurrentChannelTitle(null);
+        }
+
+        // Only increment "channels processed" counter when channel is complete (channelComplete === true)
+        if (isChannelComplete) {
+          accumulatedChannels += batchChannels.length > 0 ? batchChannels.length : 1;
+          setScanProcessedCount(accumulatedChannels);
+        }
 
         const batchChecked = Number(res.totalVideosChecked || 0);
         const batchShorts = Number(res.totalRemovedShortDuration || 0);
@@ -774,6 +795,7 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
       setIsScanRunning(false);
       setIsScanStopping(false);
       stopScanRef.current = false;
+      setScanCurrentChannelTitle(null);
     }
   };
 
@@ -1521,6 +1543,14 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
             </div>
           </div>
 
+          {/* Status line shown while current channel is mid-progress (channelComplete === false) */}
+          {isScanRunning && scanCurrentChannelTitle && (
+            <div className="flex items-center gap-2 text-xs font-medium text-amber-700 dark:text-amber-400 bg-amber-50/80 dark:bg-amber-950/50 px-2.5 py-1.5 rounded-lg border border-amber-200/60 dark:border-amber-900/40">
+              <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0 text-amber-500" />
+              <span>جاري معالجة: {scanCurrentChannelTitle} (متابعة...)</span>
+            </div>
+          )}
+
           {scanTotalChannels !== null && scanTotalChannels > 0 && (
             <div className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
               <div
@@ -1554,7 +1584,7 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
               </span>
             </div>
             <div className="text-slate-300 text-[11px] leading-relaxed break-all">
-              آخر استجابة: reset المُرسل = <span className={scanLastBatchDebug.sentReset ? 'text-emerald-400 font-bold' : 'text-slate-400'}>{String(scanLastBatchDebug.sentReset)}</span>, cursorBefore = <span className="text-purple-300 font-bold">{scanLastBatchDebug.cursorBefore}</span>, cursorAfter = <span className="text-purple-300 font-bold">{scanLastBatchDebug.cursorAfter}</span>, totalChannels = <span className="text-blue-300 font-bold">{scanLastBatchDebug.totalChannels}</span>, wrappedAround = <span className={scanLastBatchDebug.wrappedAround ? 'text-amber-400 font-bold' : 'text-slate-400'}>{String(scanLastBatchDebug.wrappedAround)}</span>, totalVideosChecked = <span className="text-cyan-300 font-bold">{scanLastBatchDebug.totalVideosChecked}</span>, totalRemovedShortDuration = <span className="text-rose-400 font-bold">{scanLastBatchDebug.totalRemovedShortDuration}</span>, totalRemovedPortrait = <span className="text-rose-400 font-bold">{scanLastBatchDebug.totalRemovedPortrait}</span>, قنوات فُحصت = <span className="text-emerald-400 font-bold">{scanLastBatchDebug.processedCount}</span>, فشل = <span className={scanLastBatchDebug.failedCount > 0 ? 'text-rose-400 font-bold' : 'text-slate-400'}>{scanLastBatchDebug.failedCount}</span>, الوقت = <span className="text-slate-300">{scanLastBatchDebug.timestamp}</span>
+              آخر استجابة: reset المُرسل = <span className={scanLastBatchDebug.sentReset ? 'text-emerald-400 font-bold' : 'text-slate-400'}>{String(scanLastBatchDebug.sentReset)}</span>, cursorBefore = <span className="text-purple-300 font-bold">{scanLastBatchDebug.cursorBefore}</span>, cursorAfter = <span className="text-purple-300 font-bold">{scanLastBatchDebug.cursorAfter}</span>, totalChannels = <span className="text-blue-300 font-bold">{scanLastBatchDebug.totalChannels}</span>, channelComplete = <span className={scanLastBatchDebug.channelComplete === false ? 'text-amber-400 font-bold' : 'text-emerald-400 font-bold'}>{String(scanLastBatchDebug.channelComplete ?? true)}</span>, wrappedAround = <span className={scanLastBatchDebug.wrappedAround ? 'text-amber-400 font-bold' : 'text-slate-400'}>{String(scanLastBatchDebug.wrappedAround)}</span>, totalVideosChecked = <span className="text-cyan-300 font-bold">{scanLastBatchDebug.totalVideosChecked}</span>, totalRemovedShortDuration = <span className="text-rose-400 font-bold">{scanLastBatchDebug.totalRemovedShortDuration}</span>, totalRemovedPortrait = <span className="text-rose-400 font-bold">{scanLastBatchDebug.totalRemovedPortrait}</span>, قنوات فُحصت = <span className="text-emerald-400 font-bold">{scanLastBatchDebug.processedCount}</span>, فشل = <span className={scanLastBatchDebug.failedCount > 0 ? 'text-rose-400 font-bold' : 'text-slate-400'}>{scanLastBatchDebug.failedCount}</span>, الوقت = <span className="text-slate-300">{scanLastBatchDebug.timestamp}</span>
             </div>
 
             {Array.isArray(scanLastBatchDebug.failedChannelsDetail) && scanLastBatchDebug.failedChannelsDetail.length > 0 && (

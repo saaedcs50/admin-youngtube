@@ -225,6 +225,8 @@ export async function triggerScanCleanupBatch(reset: boolean = false): Promise<{
   cursorAfter: number;
   totalChannels: number;
   wrappedAround: boolean;
+  channelComplete?: boolean;
+  title?: string;
   failedChannels?: any[];
 }> {
   return apiRequest<{
@@ -242,6 +244,8 @@ export async function triggerScanCleanupBatch(reset: boolean = false): Promise<{
     cursorAfter: number;
     totalChannels: number;
     wrappedAround: boolean;
+    channelComplete?: boolean;
+    title?: string;
     failedChannels?: any[];
   }>('/api/admin/scan-cleanup-batch', {
     method: 'POST',
