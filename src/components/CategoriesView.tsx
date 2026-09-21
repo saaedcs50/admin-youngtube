@@ -38,6 +38,7 @@ import {
 import { CategoryItem, ChannelItem } from '../types';
 import { channelMatchesCategory } from '../utils/categoryAliases';
 import { ConfirmModal } from './ConfirmModal';
+import CategoryChannelsModal from './CategoryChannelsModal';
 
 // Available icons library for categories
 export const AVAILABLE_ICONS: Record<string, { label: string; icon: React.ElementType; color: string }> = {
@@ -82,6 +83,9 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({ onNotify }) => {
   // Delete Confirmation Modal
   const [categoryToDelete, setCategoryToDelete] = useState<CategoryItem | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Category Channels Modal State
+  const [selectedCategoryForChannels, setSelectedCategoryForChannels] = useState<{ id: string; name: string } | null>(null);
 
   const loadData = async () => {
     setIsLoading(true);
@@ -388,7 +392,8 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({ onNotify }) => {
               <div
                 key={cat.id}
                 id={`category-card-${cat.id}`}
-                className="group p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-amber-400/60 dark:hover:border-amber-500/40 transition-all shadow-xs space-y-4 flex flex-col justify-between"
+                onClick={() => setSelectedCategoryForChannels({ id: cat.id, name: cat.name })}
+                className="group p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-amber-400/60 dark:hover:border-amber-500/40 hover:shadow-md transition-all shadow-xs space-y-4 flex flex-col justify-between cursor-pointer"
               >
                 <div className="space-y-3">
                   <div className="flex items-start justify-between gap-3">
@@ -409,7 +414,10 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({ onNotify }) => {
                     <div className="flex items-center gap-1 opacity-90 group-hover:opacity-100 transition-opacity">
                       <button
                         id={`edit-category-btn-${cat.id}`}
-                        onClick={() => handleOpenEdit(cat)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleOpenEdit(cat);
+                        }}
                         className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 transition cursor-pointer"
                         title="تعديل التصنيف"
                       >
@@ -417,7 +425,10 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({ onNotify }) => {
                       </button>
                       <button
                         id={`delete-category-btn-${cat.id}`}
-                        onClick={() => setCategoryToDelete(cat)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setCategoryToDelete(cat);
+                        }}
                         className="p-1.5 rounded-lg border border-rose-200 dark:border-rose-900/50 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 dark:text-rose-400 transition cursor-pointer"
                         title="حذف التصنيف بالكامل"
                       >
@@ -586,6 +597,20 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({ onNotify }) => {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Category Channels Modal */}
+      {selectedCategoryForChannels && (
+        <CategoryChannelsModal
+          categoryId={selectedCategoryForChannels.id}
+          categoryName={selectedCategoryForChannels.name}
+          allCategories={categories.map((c) => ({ id: c.id, name: c.name }))}
+          onClose={() => {
+            setSelectedCategoryForChannels(null);
+            loadData();
+          }}
+          onNotify={onNotify}
+        />
       )}
 
       {/* Delete Confirmation Modal */}
