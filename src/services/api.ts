@@ -210,6 +210,45 @@ export async function triggerCleanupDeadVideosBatch(reset: boolean = false): Pro
   });
 }
 
+export async function triggerScanCleanupBatch(reset: boolean = false): Promise<{
+  channelsProcessed: Array<{
+    sourceId: string;
+    title: string;
+    videosChecked: number;
+    removedShortDuration: number;
+    removedPortrait: number;
+  }>;
+  totalVideosChecked: number;
+  totalRemovedShortDuration: number;
+  totalRemovedPortrait: number;
+  cursorBefore: number;
+  cursorAfter: number;
+  totalChannels: number;
+  wrappedAround: boolean;
+  failedChannels?: any[];
+}> {
+  return apiRequest<{
+    channelsProcessed: Array<{
+      sourceId: string;
+      title: string;
+      videosChecked: number;
+      removedShortDuration: number;
+      removedPortrait: number;
+    }>;
+    totalVideosChecked: number;
+    totalRemovedShortDuration: number;
+    totalRemovedPortrait: number;
+    cursorBefore: number;
+    cursorAfter: number;
+    totalChannels: number;
+    wrappedAround: boolean;
+    failedChannels?: any[];
+  }>('/api/admin/scan-cleanup-batch', {
+    method: 'POST',
+    body: JSON.stringify({ reset }),
+  });
+}
+
 export async function fetchStatus(): Promise<StatusResponse> {
   return apiRequest<StatusResponse>('/api/admin/status');
 }

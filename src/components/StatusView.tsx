@@ -24,7 +24,7 @@ import {
   Tv,
   Zap,
 } from 'lucide-react';
-import { fetchStatus, getWorkerUrl, triggerBackfillAllBatch, triggerCleanupDeadVideosBatch } from '../services/api';
+import { fetchStatus, getWorkerUrl, triggerBackfillAllBatch, triggerCleanupDeadVideosBatch, triggerScanCleanupBatch } from '../services/api';
 import { StatusResponse } from '../types';
 import { formatTimestamp } from '../utils/formatters';
 
@@ -95,6 +95,54 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
   >([]);
 
   const stopCleanupRef = useRef(false);
+
+  // Scan Cleanup (Shorts & Portrait) state
+  const [isScanRunning, setIsScanRunning] = useState(false);
+  const [isScanStopping, setIsScanStopping] = useState(false);
+  const [scanProcessedCount, setScanProcessedCount] = useState(0);
+  const [scanTotalChannels, setScanTotalChannels] = useState<number | null>(null);
+  const [scanSkippedBatchesCount, setScanSkippedBatchesCount] = useState(0);
+  const [scanVideosCheckedTotal, setScanVideosCheckedTotal] = useState(0);
+  const [scanRemovedShortDurationTotal, setScanRemovedShortDurationTotal] = useState(0);
+  const [scanRemovedPortraitTotal, setScanRemovedPortraitTotal] = useState(0);
+  const [scanActiveTab, setScanActiveTab] = useState<'success' | 'failed'>('success');
+  const [scanLastBatchDebug, setScanLastBatchDebug] = useState<any>(null);
+  const [recentScanChannels, setRecentScanChannels] = useState<
+    Array<{
+      sourceId: string;
+      title: string;
+      videosChecked: number;
+      removedShortDuration: number;
+      removedPortrait: number;
+      timestamp: string;
+    }>
+  >([]);
+  const [scanFailedChannelsLog, setScanFailedChannelsLog] = useState<
+    Array<{
+      sourceId: string;
+      title: string;
+      error?: string;
+      timestamp: string;
+    }>
+  >([]);
+
+  const stopScanRef = useRef(false);
+
+  // Helper for scan cleanup interruptible sleep
+  const waitWithScanCancellation = async (ms: number) => {
+    const start = Date.now();
+    while (Date.now() - start < ms) {
+      if (stopScanRef.current) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  };
+
+  // Cleanup on unmount for scan cleanup
+  useEffect(() => {
+    return () => {
+      stopScanRef.current = true;
+    };
+  }, []);
 
   // Helper for cleanup interruptible sleep
   const waitWithCleanupCancellation = async (ms: number) => {
@@ -512,6 +560,227 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
     if (!isCleanupRunning) return;
     setIsCleanupStopping(true);
     stopCleanupRef.current = true;
+    onNotify('info', 'جاري إيقاف العملية...', 'سيتم التوقف فور انتهاء المحاولة الحالية.');
+  };
+
+  const handleStartScan = async () => {
+    if (isScanRunning) return;
+    setIsScanRunning(true);
+    setIsScanStopping(false);
+    stopScanRef.current = false;
+    setScanProcessedCount(0);
+    setScanSkippedBatchesCount(0);
+    setScanVideosCheckedTotal(0);
+    setScanRemovedShortDurationTotal(0);
+    setScanRemovedPortraitTotal(0);
+    setRecentScanChannels([]);
+    setScanFailedChannelsLog([]);
+    setScanActiveTab('success');
+
+    onNotify('info', 'بدء تنظيف الفيديوهات القصيرة والعمودية', 'جاري فحص مدة واتجاه الفيديوهات على دفعات وحذف القصير والعمودي...');
+
+    let accumulatedChannels = 0;
+    let accumulatedVideosChecked = 0;
+    let accumulatedShortsRemoved = 0;
+    let accumulatedPortraitRemoved = 0;
+    let skippedBatches = 0;
+    let consecutiveFailedBatches = 0;
+    let isFirstCall = true;
+
+    try {
+      while (!stopScanRef.current) {
+        let res: {
+          channelsProcessed: Array<{
+            sourceId: string;
+            title: string;
+            videosChecked: number;
+            removedShortDuration: number;
+            removedPortrait: number;
+          }>;
+          totalVideosChecked: number;
+          totalRemovedShortDuration: number;
+          totalRemovedPortrait: number;
+          cursorBefore: number;
+          cursorAfter: number;
+          totalChannels: number;
+          wrappedAround: boolean;
+          failedChannels?: any[];
+        } | null = null;
+
+        const shouldReset = isFirstCall;
+
+        // Try up to 3 total attempts for the current batch
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          if (stopScanRef.current) break;
+
+          try {
+            res = await triggerScanCleanupBatch(shouldReset);
+            setScanLastBatchDebug({
+              sentReset: shouldReset,
+              cursorBefore: res.cursorBefore,
+              cursorAfter: res.cursorAfter,
+              totalChannels: res.totalChannels,
+              wrappedAround: res.wrappedAround,
+              totalVideosChecked: res.totalVideosChecked,
+              totalRemovedShortDuration: res.totalRemovedShortDuration,
+              totalRemovedPortrait: res.totalRemovedPortrait,
+              processedCount: Array.isArray(res.channelsProcessed) ? res.channelsProcessed.length : 0,
+              failedCount: Array.isArray(res.failedChannels) ? res.failedChannels.length : 0,
+              failedChannelsDetail: Array.isArray(res.failedChannels) ? res.failedChannels : [],
+              timestamp: new Date().toLocaleTimeString('ar-EG'),
+            });
+            break; // Batch call succeeded!
+          } catch (batchErr: any) {
+            console.warn(`Scan cleanup batch attempt ${attempt}/3 failed:`, batchErr);
+            if (stopScanRef.current) break;
+
+            if (attempt < 3) {
+              // Wait 3 seconds before next retry of the same batch
+              await waitWithScanCancellation(3000);
+            }
+          }
+        }
+
+        // Mark first call as completed so subsequent batches do not reset
+        isFirstCall = false;
+
+        // If stopped during requests or retries
+        if (stopScanRef.current) {
+          onNotify(
+            'warning',
+            'تم إيقاف تنظيف الفيديوهات القصيرة والعمودية',
+            `توقفت العملية عند معالجة ${accumulatedChannels} قناة (فُحص ${accumulatedVideosChecked} فيديو، حُذف ${accumulatedShortsRemoved} قصير، حُذف ${accumulatedPortraitRemoved} عمودي).`
+          );
+          break;
+        }
+
+        // If all 3 attempts failed for this batch
+        if (!res) {
+          skippedBatches++;
+          setScanSkippedBatchesCount(skippedBatches);
+          consecutiveFailedBatches++;
+
+          if (consecutiveFailedBatches >= 3) {
+            onNotify(
+              'error',
+              'توقف التنظيف بسبب خطأ متكرر',
+              'تعذرت معالجة 3 دفعات متتالية بعد استنفاد محاولات الإعادة (3 محاولات لكل دفعة). يرجى التحقق من اتصال الخادم ومفتاح المشرف.'
+            );
+            break;
+          }
+
+          // Non-fatal: wait 3 seconds before trying next batch
+          await waitWithScanCancellation(3000);
+          continue;
+        }
+
+        // Batch succeeded -> reset consecutive failures counter
+        consecutiveFailedBatches = 0;
+
+        const batchChannels = Array.isArray(res.channelsProcessed) ? res.channelsProcessed : [];
+        accumulatedChannels += batchChannels.length;
+        setScanProcessedCount(accumulatedChannels);
+
+        const batchChecked = Number(res.totalVideosChecked || 0);
+        const batchShorts = Number(res.totalRemovedShortDuration || 0);
+        const batchPortrait = Number(res.totalRemovedPortrait || 0);
+
+        accumulatedVideosChecked += batchChecked;
+        accumulatedShortsRemoved += batchShorts;
+        accumulatedPortraitRemoved += batchPortrait;
+
+        setScanVideosCheckedTotal(accumulatedVideosChecked);
+        setScanRemovedShortDurationTotal(accumulatedShortsRemoved);
+        setScanRemovedPortraitTotal(accumulatedPortraitRemoved);
+
+        if (typeof res.totalChannels === 'number') {
+          setScanTotalChannels(res.totalChannels);
+        }
+
+        const nowStr = new Date().toLocaleTimeString('ar-EG', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        });
+
+        // Record successful channels (limit to latest 10, newest first)
+        if (batchChannels.length > 0) {
+          const mapped = batchChannels.map((c: any) => ({
+            sourceId: String(c.sourceId || c.id || ''),
+            title: String(c.title || c.name || c.sourceId || 'قناة بدون اسم'),
+            videosChecked: Number(c.videosChecked ?? 0),
+            removedShortDuration: Number(c.removedShortDuration ?? 0),
+            removedPortrait: Number(c.removedPortrait ?? 0),
+            timestamp: nowStr,
+          }));
+
+          setRecentScanChannels((prev) => {
+            const combined = [...mapped.reverse(), ...prev];
+            return combined.slice(0, 10);
+          });
+        }
+
+        // Record failed channels in this batch (if returned in Worker response)
+        const failedInBatch = Array.isArray(res.failedChannels) ? res.failedChannels : [];
+        if (failedInBatch.length > 0) {
+          const mappedFailed = failedInBatch.map((c: any) => ({
+            sourceId: String(c.sourceId || c.id || ''),
+            title: String(c.title || c.name || c.sourceId || 'قناة بدون اسم'),
+            error: String(c.error || c.message || 'تعذر فحص الأرشيف'),
+            timestamp: nowStr,
+          }));
+
+          setScanFailedChannelsLog((prev) => {
+            const combined = [...mappedFailed.reverse(), ...prev];
+            return combined.slice(0, 10);
+          });
+        }
+
+        // Check if full pass finished
+        if (res.wrappedAround) {
+          const summaryDesc =
+            skippedBatches > 0
+              ? `تم الانتهاء من فحص أرشيف جميع القنوات (${res.totalChannels || accumulatedChannels} قناة) مع تخطي ${skippedBatches} دفعة بسبب مشاكل شبكة. تم فحص ${accumulatedVideosChecked} فيديو وحذف ${accumulatedShortsRemoved} فيديو قصير و ${accumulatedPortraitRemoved} فيديو عمودي.`
+              : `تم الانتهاء من فحص أرشيف جميع القنوات (${res.totalChannels || accumulatedChannels} قناة). تم فحص ${accumulatedVideosChecked} فيديو وحذف ${accumulatedShortsRemoved} فيديو قصير و ${accumulatedPortraitRemoved} فيديو عمودي.`;
+          onNotify('success', 'اكتمل تنظيف الفيديوهات القصيرة والعمودية! ✅', summaryDesc);
+          break;
+        }
+
+        if (stopScanRef.current) {
+          onNotify(
+            'warning',
+            'تم إيقاف تنظيف الفيديوهات القصيرة والعمودية',
+            `توقفت العملية عند معالجة ${accumulatedChannels} قناة (فُحص ${accumulatedVideosChecked} فيديو، حُذف ${accumulatedShortsRemoved} قصير، حُذف ${accumulatedPortraitRemoved} عمودي).`
+          );
+          break;
+        }
+
+        // Wait ~1.5s delay between batch calls
+        await waitWithScanCancellation(1500);
+
+        if (stopScanRef.current) {
+          onNotify(
+            'warning',
+            'تم إيقاف تنظيف الفيديوهات القصيرة والعمودية',
+            `توقفت العملية عند معالجة ${accumulatedChannels} قناة (فُحص ${accumulatedVideosChecked} فيديو، حُذف ${accumulatedShortsRemoved} قصير، حُذف ${accumulatedPortraitRemoved} عمودي).`
+          );
+          break;
+        }
+      }
+    } catch (err: any) {
+      console.error('Error in scan cleanup batch loop:', err);
+      onNotify('error', 'فشل أثناء تنظيف الفيديوهات القصيرة والعمودية', err?.message || 'خطأ أثناء تنفيذ الدفعة.');
+    } finally {
+      setIsScanRunning(false);
+      setIsScanStopping(false);
+      stopScanRef.current = false;
+    }
+  };
+
+  const handleStopScan = () => {
+    if (!isScanRunning) return;
+    setIsScanStopping(true);
+    stopScanRef.current = true;
     onNotify('info', 'جاري إيقاف العملية...', 'سيتم التوقف فور انتهاء المحاولة الحالية.');
   };
 
@@ -1140,6 +1409,269 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
           {cleanupActiveTab === 'failed' && (
             <div className="space-y-1.5">
               {cleanupFailedChannelsLog.map((item, idx) => (
+                <div
+                  key={`failed-${item.sourceId}-${idx}`}
+                  className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-rose-50/50 dark:bg-rose-950/20 border border-rose-200/40 dark:border-rose-900/40 text-xs"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <AlertCircle className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                    <span className="font-semibold text-rose-900 dark:text-rose-200 truncate">
+                      {item.title}
+                    </span>
+                    {item.sourceId && (
+                      <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500 hidden sm:inline truncate">
+                        ({item.sourceId})
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-3 shrink-0">
+                    <span className="px-2 py-0.5 rounded-md bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 font-mono text-[11px] font-semibold flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" />
+                      {item.error || 'تعذر الفحص'}
+                    </span>
+                    <span className="text-[10px] font-mono text-slate-400">
+                      {item.timestamp}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Scan Cleanup Shorts & Portrait Section */}
+      <div id="scan-cleanup-shorts-card" className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs p-6 space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <h3 className="font-bold text-base text-slate-900 dark:text-slate-100">
+                تنظيف الفيديوهات القصيرة والعمودية
+              </h3>
+              {isScanRunning && (
+                <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 animate-pulse">
+                  <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
+                  {isScanStopping ? 'جاري الإيقاف...' : 'جاري الفحص والتنظيف...'}
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed max-w-2xl">
+              يفحص هذا الإجراء مدة واتجاه كل فيديو في الأرشيف، ويحذف تلقائيًا أي فيديو أقل من دقيقتين أو ذو اتجاه عمودي (Shorts)، على دفعات.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2.5 shrink-0 self-end sm:self-auto">
+            <button
+              id="scan-cleanup-start-btn"
+              onClick={handleStartScan}
+              disabled={isScanRunning}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-all shadow-sm shadow-amber-600/20 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isScanRunning && !isScanStopping ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Play className="w-3.5 h-3.5 fill-current" />
+              )}
+              <span>بدء</span>
+            </button>
+
+            <button
+              id="scan-cleanup-stop-btn"
+              onClick={handleStopScan}
+              disabled={!isScanRunning || isScanStopping}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-950/80 text-rose-700 dark:text-rose-300 text-xs font-bold transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Square className="w-3.5 h-3.5 fill-current" />
+              <span>{isScanStopping ? 'جاري الإيقاف...' : 'إيقاف'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Progress Display */}
+        <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-slate-700 dark:text-slate-300">
+                حالة التقدم:
+              </span>
+              <span className="font-mono font-bold text-amber-600 dark:text-amber-400">
+                {scanTotalChannels !== null
+                  ? `تمت معالجة ${scanProcessedCount} من ${scanTotalChannels} قناة`
+                  : `تمت معالجة ${scanProcessedCount} قناة`}
+              </span>
+            </div>
+            {scanTotalChannels !== null && scanTotalChannels > 0 && (
+              <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
+                {Math.min(100, Math.round((scanProcessedCount / scanTotalChannels) * 100))}%
+              </span>
+            )}
+          </div>
+
+          {/* Running total for videos checked and removed shorts/portrait */}
+          <div className="flex flex-wrap items-center gap-4 text-xs pt-1 border-t border-slate-200/40 dark:border-slate-700/40">
+            <div className="flex items-center gap-1.5">
+              <span className="text-slate-500 dark:text-slate-400">الإجمالي:</span>
+              <span className="font-mono font-bold text-slate-700 dark:text-slate-200">
+                تم فحص {scanVideosCheckedTotal} فيديو — حُذف {scanRemovedShortDurationTotal} (قصير المدة)، حُذف {scanRemovedPortraitTotal} (عمودي)
+              </span>
+            </div>
+          </div>
+
+          {scanTotalChannels !== null && scanTotalChannels > 0 && (
+            <div className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-amber-600 dark:bg-amber-500 rounded-full transition-all duration-300 ease-out"
+                style={{
+                  width: `${Math.min(100, Math.max(0, (scanProcessedCount / scanTotalChannels) * 100))}%`,
+                }}
+              />
+            </div>
+          )}
+
+          {/* Secondary line when batches were skipped due to network/timeout issues */}
+          {scanSkippedBatchesCount > 0 && (
+            <div className="flex items-center gap-1.5 text-[11px] font-medium text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-2.5 py-1 rounded-lg border border-amber-200/60 dark:border-amber-900/40">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-amber-500" />
+              <span>تم تخطي {scanSkippedBatchesCount} دفعة بسبب مشاكل شبكة مؤقتة</span>
+            </div>
+          )}
+        </div>
+
+        {/* Diagnostic Debug Block */}
+        {scanLastBatchDebug !== null && (
+          <div className="p-3.5 rounded-xl bg-slate-950 text-slate-200 border border-slate-800 font-mono text-xs overflow-x-auto space-y-1.5">
+            <div className="flex items-center justify-between text-[11px] text-amber-400 font-bold border-b border-slate-800/80 pb-1">
+              <span className="flex items-center gap-1.5">
+                <Terminal className="w-3.5 h-3.5 text-amber-400" />
+                آخر استجابة للدفعة (Last Batch Response Diagnostics)
+              </span>
+              <span className="text-slate-400 font-normal text-[10px]">
+                {scanLastBatchDebug.timestamp}
+              </span>
+            </div>
+            <div className="text-slate-300 text-[11px] leading-relaxed break-all">
+              آخر استجابة: reset المُرسل = <span className={scanLastBatchDebug.sentReset ? 'text-emerald-400 font-bold' : 'text-slate-400'}>{String(scanLastBatchDebug.sentReset)}</span>, cursorBefore = <span className="text-purple-300 font-bold">{scanLastBatchDebug.cursorBefore}</span>, cursorAfter = <span className="text-purple-300 font-bold">{scanLastBatchDebug.cursorAfter}</span>, totalChannels = <span className="text-blue-300 font-bold">{scanLastBatchDebug.totalChannels}</span>, wrappedAround = <span className={scanLastBatchDebug.wrappedAround ? 'text-amber-400 font-bold' : 'text-slate-400'}>{String(scanLastBatchDebug.wrappedAround)}</span>, totalVideosChecked = <span className="text-cyan-300 font-bold">{scanLastBatchDebug.totalVideosChecked}</span>, totalRemovedShortDuration = <span className="text-rose-400 font-bold">{scanLastBatchDebug.totalRemovedShortDuration}</span>, totalRemovedPortrait = <span className="text-rose-400 font-bold">{scanLastBatchDebug.totalRemovedPortrait}</span>, قنوات فُحصت = <span className="text-emerald-400 font-bold">{scanLastBatchDebug.processedCount}</span>, فشل = <span className={scanLastBatchDebug.failedCount > 0 ? 'text-rose-400 font-bold' : 'text-slate-400'}>{scanLastBatchDebug.failedCount}</span>, الوقت = <span className="text-slate-300">{scanLastBatchDebug.timestamp}</span>
+            </div>
+
+            {Array.isArray(scanLastBatchDebug.failedChannelsDetail) && scanLastBatchDebug.failedChannelsDetail.length > 0 && (
+              <div className="pt-1.5 mt-1.5 border-t border-slate-800/80 space-y-1 text-[11px] text-rose-300/90 font-mono">
+                {scanLastBatchDebug.failedChannelsDetail.map((fc: any, idx: number) => {
+                  const idOrTitle = fc.sourceId || fc.title || `قناة #${idx + 1}`;
+                  const errType = fc.error || 'other';
+                  const extra = fc.status !== undefined
+                    ? `(status: ${fc.status})`
+                    : fc.message
+                    ? `— ${fc.message}`
+                    : '';
+                  return (
+                    <div key={`${fc.sourceId || idx}-${idx}`} className="break-all">
+                      - {idOrTitle}: {errType} {extra}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Live-updating small log of the last few processed channel titles & failed channels */}
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setScanActiveTab('success')}
+                className={`flex items-center gap-1.5 font-semibold px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
+                  scanActiveTab === 'success'
+                    ? 'bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300'
+                    : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400'
+                }`}
+              >
+                <ListVideo className="w-3.5 h-3.5 text-amber-500" />
+                <span>آخر القنوات المفحوصة (أحدث 10)</span>
+                {recentScanChannels.length > 0 && (
+                  <span className="font-mono text-[10px] px-1.5 py-0.2 bg-amber-200/60 dark:bg-amber-900/60 rounded-full">
+                    {recentScanChannels.length}
+                  </span>
+                )}
+              </button>
+
+              {scanFailedChannelsLog.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setScanActiveTab('failed')}
+                  className={`flex items-center gap-1.5 font-semibold px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
+                    scanActiveTab === 'failed'
+                      ? 'bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300'
+                      : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400'
+                  }`}
+                >
+                  <AlertCircle className="w-3.5 h-3.5 text-rose-500" />
+                  <span>قنوات تعذر فحصها</span>
+                  <span className="font-mono text-[10px] px-1.5 py-0.2 bg-rose-200/60 dark:bg-rose-900/60 text-rose-800 dark:text-rose-200 rounded-full font-bold">
+                    {scanFailedChannelsLog.length}
+                  </span>
+                </button>
+              )}
+            </div>
+
+            <span className="text-[11px] text-slate-400 hidden sm:inline">
+              يتم التحديث تلقائيًا أثناء تشغيل الدفعات
+            </span>
+          </div>
+
+          {/* Success Tab Content */}
+          {scanActiveTab === 'success' && (
+            <div className="space-y-1.5">
+              {recentScanChannels.length === 0 ? (
+                <div className="py-4 text-center text-xs text-slate-400 dark:text-slate-500 border border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
+                  لم يتم فحص أي قنوات بعد في هذه الدورة. اضغط &quot;بدء&quot; لتنظيف الأرشيف.
+                </div>
+              ) : (
+                recentScanChannels.map((item, idx) => (
+                  <div
+                    key={`${item.sourceId}-${idx}`}
+                    className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/40 dark:border-slate-800/60 text-xs"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                      <span className="font-semibold text-slate-800 dark:text-slate-200 truncate">
+                        {item.title}
+                      </span>
+                      {item.sourceId && (
+                        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500 hidden sm:inline truncate">
+                          ({item.sourceId})
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-3 shrink-0">
+                      <span className="px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-mono text-[11px] font-semibold">
+                        فُحص {item.videosChecked} فيديو
+                      </span>
+                      {(item.removedShortDuration > 0 || item.removedPortrait > 0) && (
+                        <span className="px-2 py-0.5 rounded-md bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 font-mono text-[11px] font-semibold">
+                          حُذف {item.removedShortDuration} قصير / {item.removedPortrait} عمودي
+                        </span>
+                      )}
+                      <span className="text-[10px] font-mono text-slate-400">
+                        {item.timestamp}
+                      </span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {/* Failed Tab Content */}
+          {scanActiveTab === 'failed' && (
+            <div className="space-y-1.5">
+              {scanFailedChannelsLog.map((item, idx) => (
                 <div
                   key={`failed-${item.sourceId}-${idx}`}
                   className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-rose-50/50 dark:bg-rose-950/20 border border-rose-200/40 dark:border-rose-900/40 text-xs"
