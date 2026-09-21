@@ -537,10 +537,26 @@ export async function triggerChannelBackfill(
   added?: number;
   [key: string]: any;
 }> {
-  return apiRequest('/api/channel-backfill', {
-    method: 'POST',
-    body: JSON.stringify({ sourceId, sourceType, title }),
+  const params = new URLSearchParams({
+    id: sourceId,
+    sourceType: sourceType || 'channel',
+    deepen: '1',
+    max: '2000',
   });
+  const res = await apiRequest<{
+    sourceId: string;
+    videos: any[];
+    count: number;
+    nextPageToken: string | null;
+    deepened: boolean;
+  }>(`/api/channel-archive?${params.toString()}`, { method: 'GET' });
+  return {
+    success: res.deepened,
+    count: res.count,
+    message: res.deepened
+      ? undefined
+      : 'لم يتم جلب فيديوهات إضافية (قد يكون الأرشيف محدّث بالفعل أو مفتاح API غير متاح).',
+  };
 }
 
 export async function fetchAnnouncements(): Promise<AnnouncementItem[]> {
