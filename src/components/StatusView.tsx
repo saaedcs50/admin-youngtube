@@ -27,6 +27,7 @@ import {
 import { fetchStatus, getWorkerUrl, triggerBackfillAllBatch, triggerCleanupDeadVideosBatch, triggerScanCleanupBatch } from '../services/api';
 import { StatusResponse } from '../types';
 import { formatTimestamp } from '../utils/formatters';
+import { useBatchTool } from '../hooks/useBatchTool';
 
 interface StatusViewProps {
   onNotify: (type: 'success' | 'error' | 'info' | 'warning', title: string, desc?: string) => void;
@@ -39,772 +40,140 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
   const [lastCheck, setLastCheck] = useState<Date | null>(null);
   const [copied, setCopied] = useState(false);
 
-  // Backfill All Channels state
-  const [isBackfillRunning, setIsBackfillRunning] = useState(false);
-  const [isBackfillStopping, setIsBackfillStopping] = useState(false);
-  const [backfillProcessedCount, setBackfillProcessedCount] = useState(0);
-  const [backfillTotalChannels, setBackfillTotalChannels] = useState<number | null>(null);
-  const [skippedBatchesCount, setSkippedBatchesCount] = useState(0);
-  const [activeTab, setActiveTab] = useState<'success' | 'failed'>('success');
-  const [lastBatchDebug, setLastBatchDebug] = useState<any>(null);
-  const [recentProcessedChannels, setRecentProcessedChannels] = useState<
-    Array<{
-      sourceId: string;
-      title: string;
-      videoCount: number;
-      timestamp: string;
-    }>
-  >([]);
-  const [failedChannelsLog, setFailedChannelsLog] = useState<
-    Array<{
-      sourceId: string;
-      title: string;
-      error?: string;
-      timestamp: string;
-    }>
-  >([]);
-
-  const stopBackfillRef = useRef(false);
-
-  // Cleanup Dead Videos state
-  const [isCleanupRunning, setIsCleanupRunning] = useState(false);
-  const [isCleanupStopping, setIsCleanupStopping] = useState(false);
-  const [cleanupProcessedCount, setCleanupProcessedCount] = useState(0);
-  const [cleanupTotalChannels, setCleanupTotalChannels] = useState<number | null>(null);
-  const [cleanupSkippedBatchesCount, setCleanupSkippedBatchesCount] = useState(0);
-  const [cleanupVideosCheckedTotal, setCleanupVideosCheckedTotal] = useState(0);
-  const [cleanupDeadVideosRemovedTotal, setCleanupDeadVideosRemovedTotal] = useState(0);
-  const [cleanupActiveTab, setCleanupActiveTab] = useState<'success' | 'failed'>('success');
-  const [cleanupLastBatchDebug, setCleanupLastBatchDebug] = useState<any>(null);
-  const [recentCleanupChannels, setRecentCleanupChannels] = useState<
-    Array<{
-      sourceId: string;
-      title: string;
-      videosChecked: number;
-      deadVideosRemoved: number;
-      timestamp: string;
-    }>
-  >([]);
-  const [cleanupFailedChannelsLog, setCleanupFailedChannelsLog] = useState<
-    Array<{
-      sourceId: string;
-      title: string;
-      error?: string;
-      timestamp: string;
-    }>
-  >([]);
-
-  const stopCleanupRef = useRef(false);
-
-  // Scan Cleanup (Shorts & Portrait) state
-  const [isScanRunning, setIsScanRunning] = useState(false);
-  const [isScanStopping, setIsScanStopping] = useState(false);
-  const [scanProcessedCount, setScanProcessedCount] = useState(0);
-  const [scanTotalChannels, setScanTotalChannels] = useState<number | null>(null);
-  const [scanSkippedBatchesCount, setScanSkippedBatchesCount] = useState(0);
-  const [scanVideosCheckedTotal, setScanVideosCheckedTotal] = useState(0);
-  const [scanRemovedShortDurationTotal, setScanRemovedShortDurationTotal] = useState(0);
-  const [scanRemovedPortraitTotal, setScanRemovedPortraitTotal] = useState(0);
-  const [scanCurrentChannelTitle, setScanCurrentChannelTitle] = useState<string | null>(null);
-  const [scanActiveTab, setScanActiveTab] = useState<'success' | 'failed'>('success');
-  const [scanLastBatchDebug, setScanLastBatchDebug] = useState<any>(null);
-  const [recentScanChannels, setRecentScanChannels] = useState<
-    Array<{
-      sourceId: string;
-      title: string;
-      videosChecked: number;
-      removedShortDuration: number;
-      removedPortrait: number;
-      timestamp: string;
-    }>
-  >([]);
-  const [scanFailedChannelsLog, setScanFailedChannelsLog] = useState<
-    Array<{
-      sourceId: string;
-      title: string;
-      error?: string;
-      timestamp: string;
-    }>
-  >([]);
-
-  const stopScanRef = useRef(false);
-
-  // Helper for scan cleanup interruptible sleep
-  const waitWithScanCancellation = async (ms: number) => {
-    const start = Date.now();
-    while (Date.now() - start < ms) {
-      if (stopScanRef.current) return;
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-  };
-
-  // Cleanup on unmount for scan cleanup
-  useEffect(() => {
-    return () => {
-      stopScanRef.current = true;
-    };
-  }, []);
-
-  // Helper for cleanup interruptible sleep
-  const waitWithCleanupCancellation = async (ms: number) => {
-    const start = Date.now();
-    while (Date.now() - start < ms) {
-      if (stopCleanupRef.current) return;
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-  };
-
-  // Cleanup on unmount for cleanup dead videos
-  useEffect(() => {
-    return () => {
-      stopCleanupRef.current = true;
-    };
-  }, []);
-
-  // Helper for interruptible sleep
-  const waitWithCancellation = async (ms: number) => {
-    const start = Date.now();
-    while (Date.now() - start < ms) {
-      if (stopBackfillRef.current) return;
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-  };
-
-  // Clean up on unmount
-  useEffect(() => {
-    return () => {
-      stopBackfillRef.current = true;
-    };
-  }, []);
-
-  const handleStartBackfill = async () => {
-    if (isBackfillRunning) return;
-    setIsBackfillRunning(true);
-    setIsBackfillStopping(false);
-    stopBackfillRef.current = false;
-    setBackfillProcessedCount(0);
-    setSkippedBatchesCount(0);
-    setRecentProcessedChannels([]);
-    setFailedChannelsLog([]);
-    setActiveTab('success');
-
-    onNotify('info', 'بدء Backfill الأرشيف العميق', 'جاري جلب الفيديوهات على دفعات مع دعم إعادة المحاولة التلقائية...');
-
-    let accumulatedCount = 0;
-    let skippedBatches = 0;
-    let consecutiveFailedBatches = 0;
-    let isFirstCall = true;
-
-    try {
-      while (!stopBackfillRef.current) {
-        let res: {
-          processedChannels: any[];
-          failedChannels?: any[];
-          cursorBefore: number;
-          cursorAfter: number;
-          totalChannels: number;
-          wrappedAround: boolean;
-        } | null = null;
-
-        const shouldReset = isFirstCall;
-
-        // Try up to 3 total attempts for the current batch
-        for (let attempt = 1; attempt <= 3; attempt++) {
-          if (stopBackfillRef.current) break;
-
-          try {
-            res = await triggerBackfillAllBatch(shouldReset);
-            setLastBatchDebug({
-              sentReset: shouldReset,
-              cursorBefore: res.cursorBefore,
-              cursorAfter: res.cursorAfter,
-              totalChannels: res.totalChannels,
-              wrappedAround: res.wrappedAround,
-              processedCount: Array.isArray(res.processedChannels) ? res.processedChannels.length : 0,
-              failedCount: Array.isArray(res.failedChannels) ? res.failedChannels.length : 0,
-              failedChannelsDetail: Array.isArray(res.failedChannels) ? res.failedChannels : [],
-              timestamp: new Date().toLocaleTimeString('ar-EG'),
-            });
-            break; // Batch call succeeded!
-          } catch (batchErr: any) {
-            console.warn(`Backfill batch attempt ${attempt}/3 failed:`, batchErr);
-            if (stopBackfillRef.current) break;
-
-            if (attempt < 3) {
-              // Wait 3 seconds before next retry of the same batch
-              await waitWithCancellation(3000);
-            }
-          }
-        }
-
-        // Mark first call as completed so subsequent batches do not reset
-        isFirstCall = false;
-
-        // If stopped during requests or retries
-        if (stopBackfillRef.current) {
-          onNotify('warning', 'تم إيقاف Backfill', `توقفت العملية عند معالجة ${accumulatedCount} قناة.`);
-          break;
-        }
-
-        // If all 3 attempts failed for this batch
-        if (!res) {
-          skippedBatches++;
-          setSkippedBatchesCount(skippedBatches);
-          consecutiveFailedBatches++;
-
-          if (consecutiveFailedBatches >= 3) {
-            onNotify(
-              'error',
-              'توقف Backfill بسبب خطأ متكرر',
-              'تعذرت معالجة 3 دفعات متتالية بعد استنفاد محاولات الإعادة (3 محاولات لكل دفعة). يرجى التحقق من اتصال الخادم ومفتاح المشرف.'
-            );
-            break;
-          }
-
-          // Non-fatal: wait 3 seconds before trying next batch
-          await waitWithCancellation(3000);
-          continue;
-        }
-
-        // Batch succeeded -> reset consecutive failures counter
-        consecutiveFailedBatches = 0;
-
-        const batchChannels = Array.isArray(res.processedChannels) ? res.processedChannels : [];
-        accumulatedCount += batchChannels.length;
-        setBackfillProcessedCount(accumulatedCount);
-
-        if (typeof res.totalChannels === 'number') {
-          setBackfillTotalChannels(res.totalChannels);
-        }
-
-        const nowStr = new Date().toLocaleTimeString('ar-EG', {
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-        });
-
-        // Record successful channels (limit to latest 10, newest first)
-        if (batchChannels.length > 0) {
-          const mapped = batchChannels.map((c: any) => ({
+  // 1. Deep Backfill All Channels tool hook
+  const backfillTool = useBatchTool({
+    name: 'backfill',
+    runOnce: ({ reset }) => triggerBackfillAllBatch(reset),
+    interpret: (res) => ({
+      successItems: Array.isArray(res.processedChannels)
+        ? res.processedChannels.map((c: any) => ({
             sourceId: String(c.sourceId || c.id || ''),
             title: String(c.title || c.name || c.sourceId || 'قناة بدون اسم'),
             videoCount: Number(c.videoCount ?? c.count ?? 0),
-            timestamp: nowStr,
-          }));
+          }))
+        : [],
+      failedItems: res.failedChannels,
+      totalChannels: res.totalChannels,
+      wrappedAround: res.wrappedAround,
+    }),
+    onNotify,
+    messages: {
+      startTitle: 'بدء Backfill الأرشيف العميق',
+      startDesc: 'جاري جلب الفيديوهات على دفعات مع دعم إعادة المحاولة التلقائية...',
+      completeTitle: 'اكتمل Backfill لكل القنوات! ✅',
+      getCompleteDesc: ({ totalChannels, processedCount, skippedBatches }) =>
+        skippedBatches > 0
+          ? `تم الانتهاء من فحص وتحديث أرشيف جميع القنوات (${totalChannels || processedCount} قناة) مع تخطي ${skippedBatches} دفعة بسبب مشاكل شبكة.`
+          : `تم الانتهاء من فحص وتحديث أرشيف جميع القنوات (${totalChannels || processedCount} قناة).`,
+      stoppedTitle: 'تم إيقاف Backfill',
+      getStoppedDesc: ({ processedCount }) => `توقفت العملية عند معالجة ${processedCount} قناة.`,
+      consecutiveFailuresTitle: 'توقف Backfill بسبب خطأ متكرر',
+      consecutiveFailuresDesc:
+        'تعذرت معالجة 3 دفعات متتالية بعد استنفاد محاولات الإعادة (3 محاولات لكل دفعة). يرجى التحقق من اتصال الخادم ومفتاح المشرف.',
+      loopErrorTitle: 'فشل أثناء Backfill',
+    },
+  });
 
-          setRecentProcessedChannels((prev) => {
-            const combined = [...mapped.reverse(), ...prev];
-            return combined.slice(0, 10);
-          });
-        }
-
-        // Record failed channels in this batch (if returned in Worker response)
-        const failedInBatch = Array.isArray(res.failedChannels) ? res.failedChannels : [];
-        if (failedInBatch.length > 0) {
-          const mappedFailed = failedInBatch.map((c: any) => ({
-            sourceId: String(c.sourceId || c.id || ''),
-            title: String(c.title || c.name || c.sourceId || 'قناة بدون اسم'),
-            error: String(c.error || c.message || 'تعذر جلب الأرشيف'),
-            timestamp: nowStr,
-          }));
-
-          setFailedChannelsLog((prev) => {
-            const combined = [...mappedFailed.reverse(), ...prev];
-            return combined.slice(0, 10);
-          });
-        }
-
-        // Check if full pass finished
-        if (res.wrappedAround) {
-          const summaryDesc =
-            skippedBatches > 0
-              ? `تم الانتهاء من فحص وتحديث أرشيف جميع القنوات (${res.totalChannels || accumulatedCount} قناة) مع تخطي ${skippedBatches} دفعة بسبب مشاكل شبكة.`
-              : `تم الانتهاء من فحص وتحديث أرشيف جميع القنوات (${res.totalChannels || accumulatedCount} قناة).`;
-          onNotify('success', 'اكتمل Backfill لكل القنوات! ✅', summaryDesc);
-          break;
-        }
-
-        if (stopBackfillRef.current) {
-          onNotify('warning', 'تم إيقاف Backfill', `توقفت العملية عند معالجة ${accumulatedCount} قناة.`);
-          break;
-        }
-
-        // Wait ~1.5s delay between batch calls
-        await waitWithCancellation(1500);
-
-        if (stopBackfillRef.current) {
-          onNotify('warning', 'تم إيقاف Backfill', `توقفت العملية عند معالجة ${accumulatedCount} قناة.`);
-          break;
-        }
-      }
-    } catch (err: any) {
-      console.error('Error in backfill batch loop:', err);
-      onNotify('error', 'فشل أثناء Backfill', err?.message || 'خطأ أثناء تنفيذ دفعة Backfill.');
-    } finally {
-      setIsBackfillRunning(false);
-      setIsBackfillStopping(false);
-      stopBackfillRef.current = false;
-    }
-  };
-
-  const handleStopBackfill = () => {
-    if (!isBackfillRunning) return;
-    setIsBackfillStopping(true);
-    stopBackfillRef.current = true;
-    onNotify('info', 'جاري إيقاف العملية...', 'سيتم التوقف فور انتهاء المحاولة الحالية.');
-  };
-
-  const handleStartCleanup = async () => {
-    if (isCleanupRunning) return;
-    setIsCleanupRunning(true);
-    setIsCleanupStopping(false);
-    stopCleanupRef.current = false;
-    setCleanupProcessedCount(0);
-    setCleanupSkippedBatchesCount(0);
-    setCleanupVideosCheckedTotal(0);
-    setCleanupDeadVideosRemovedTotal(0);
-    setRecentCleanupChannels([]);
-    setCleanupFailedChannelsLog([]);
-    setCleanupActiveTab('success');
-
-    onNotify('info', 'بدء تنظيف الفيديوهات الميتة', 'جاري فحص فيديوهات الأرشيف على دفعات وحذف الفيديوهات المحذوفة أو الخاصة...');
-
-    let accumulatedChannels = 0;
-    let accumulatedVideosChecked = 0;
-    let accumulatedDeadVideosRemoved = 0;
-    let skippedBatches = 0;
-    let consecutiveFailedBatches = 0;
-    let isFirstCall = true;
-
-    try {
-      while (!stopCleanupRef.current) {
-        let res: {
-          channelsProcessed: Array<{
-            sourceId: string;
-            title: string;
-            videosChecked: number;
-            deadVideosRemoved: number;
-          }>;
-          totalVideosChecked: number;
-          totalDeadVideosRemoved: number;
-          cursorBefore: number;
-          cursorAfter: number;
-          totalChannels: number;
-          wrappedAround: boolean;
-          failedChannels?: any[];
-        } | null = null;
-
-        const shouldReset = isFirstCall;
-
-        // Try up to 3 total attempts for the current batch
-        for (let attempt = 1; attempt <= 3; attempt++) {
-          if (stopCleanupRef.current) break;
-
-          try {
-            res = await triggerCleanupDeadVideosBatch(shouldReset);
-            setCleanupLastBatchDebug({
-              sentReset: shouldReset,
-              cursorBefore: res.cursorBefore,
-              cursorAfter: res.cursorAfter,
-              totalChannels: res.totalChannels,
-              wrappedAround: res.wrappedAround,
-              totalVideosChecked: res.totalVideosChecked,
-              totalDeadVideosRemoved: res.totalDeadVideosRemoved,
-              processedCount: Array.isArray(res.channelsProcessed) ? res.channelsProcessed.length : 0,
-              failedCount: Array.isArray(res.failedChannels) ? res.failedChannels.length : 0,
-              failedChannelsDetail: Array.isArray(res.failedChannels) ? res.failedChannels : [],
-              timestamp: new Date().toLocaleTimeString('ar-EG'),
-            });
-            break; // Batch call succeeded!
-          } catch (batchErr: any) {
-            console.warn(`Cleanup batch attempt ${attempt}/3 failed:`, batchErr);
-            if (stopCleanupRef.current) break;
-
-            if (attempt < 3) {
-              // Wait 3 seconds before next retry of the same batch
-              await waitWithCleanupCancellation(3000);
-            }
-          }
-        }
-
-        // Mark first call as completed so subsequent batches do not reset
-        isFirstCall = false;
-
-        // If stopped during requests or retries
-        if (stopCleanupRef.current) {
-          onNotify(
-            'warning',
-            'تم إيقاف تنظيف الفيديوهات',
-            `توقفت العملية عند معالجة ${accumulatedChannels} قناة (فُحص ${accumulatedVideosChecked} فيديو، حُذف ${accumulatedDeadVideosRemoved} فيديو).`
-          );
-          break;
-        }
-
-        // If all 3 attempts failed for this batch
-        if (!res) {
-          skippedBatches++;
-          setCleanupSkippedBatchesCount(skippedBatches);
-          consecutiveFailedBatches++;
-
-          if (consecutiveFailedBatches >= 3) {
-            onNotify(
-              'error',
-              'توقف تنظيف الفيديوهات بسبب خطأ متكرر',
-              'تعذرت معالجة 3 دفعات متتالية بعد استنفاد محاولات الإعادة (3 محاولات لكل دفعة). يرجى التحقق من اتصال الخادم ومفتاح المشرف.'
-            );
-            break;
-          }
-
-          // Non-fatal: wait 3 seconds before trying next batch
-          await waitWithCleanupCancellation(3000);
-          continue;
-        }
-
-        // Batch succeeded -> reset consecutive failures counter
-        consecutiveFailedBatches = 0;
-
-        const batchChannels = Array.isArray(res.channelsProcessed) ? res.channelsProcessed : [];
-        accumulatedChannels += batchChannels.length;
-        setCleanupProcessedCount(accumulatedChannels);
-
-        const batchChecked = Number(res.totalVideosChecked || 0);
-        const batchDead = Number(res.totalDeadVideosRemoved || 0);
-        accumulatedVideosChecked += batchChecked;
-        accumulatedDeadVideosRemoved += batchDead;
-        setCleanupVideosCheckedTotal(accumulatedVideosChecked);
-        setCleanupDeadVideosRemovedTotal(accumulatedDeadVideosRemoved);
-
-        if (typeof res.totalChannels === 'number') {
-          setCleanupTotalChannels(res.totalChannels);
-        }
-
-        const nowStr = new Date().toLocaleTimeString('ar-EG', {
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-        });
-
-        // Record successful channels (limit to latest 10, newest first)
-        if (batchChannels.length > 0) {
-          const mapped = batchChannels.map((c: any) => ({
+  // 2. Cleanup Dead Videos tool hook
+  const cleanupTool = useBatchTool({
+    name: 'cleanup',
+    runOnce: ({ reset }) => triggerCleanupDeadVideosBatch(reset),
+    interpret: (res) => ({
+      successItems: Array.isArray(res.channelsProcessed)
+        ? res.channelsProcessed.map((c: any) => ({
             sourceId: String(c.sourceId || c.id || ''),
             title: String(c.title || c.name || c.sourceId || 'قناة بدون اسم'),
             videosChecked: Number(c.videosChecked ?? 0),
             deadVideosRemoved: Number(c.deadVideosRemoved ?? 0),
-            timestamp: nowStr,
-          }));
+          }))
+        : [],
+      failedItems: res.failedChannels,
+      totalChannels: res.totalChannels,
+      wrappedAround: res.wrappedAround,
+      metricsDelta: {
+        videosChecked: Number(res.totalVideosChecked || 0),
+        deadVideosRemoved: Number(res.totalDeadVideosRemoved || 0),
+      },
+      debugExtra: {
+        totalVideosChecked: res.totalVideosChecked,
+        totalDeadVideosRemoved: res.totalDeadVideosRemoved,
+      },
+    }),
+    onNotify,
+    messages: {
+      startTitle: 'بدء تنظيف الفيديوهات الميتة',
+      startDesc: 'جاري فحص فيديوهات الأرشيف على دفعات وحذف الفيديوهات المحذوفة أو الخاصة...',
+      completeTitle: 'اكتمل تنظيف الفيديوهات الميتة! ✅',
+      getCompleteDesc: ({ totalChannels, processedCount, skippedBatches, metrics }) =>
+        skippedBatches > 0
+          ? `تم الانتهاء من فحص أرشيف جميع القنوات (${totalChannels || processedCount} قناة) مع تخطي ${skippedBatches} دفعة بسبب مشاكل شبكة. تم فحص ${metrics.videosChecked || 0} فيديو وحذف ${metrics.deadVideosRemoved || 0} فيديو ميت.`
+          : `تم الانتهاء من فحص أرشيف جميع القنوات (${totalChannels || processedCount} قناة). تم فحص ${metrics.videosChecked || 0} فيديو وحذف ${metrics.deadVideosRemoved || 0} فيديو ميت.`,
+      stoppedTitle: 'تم إيقاف تنظيف الفيديوهات',
+      getStoppedDesc: ({ processedCount, metrics }) =>
+        `توقفت العملية عند معالجة ${processedCount} قناة (فُحص ${metrics.videosChecked || 0} فيديو، حُذف ${metrics.deadVideosRemoved || 0} فيديو).`,
+      consecutiveFailuresTitle: 'توقف تنظيف الفيديوهات بسبب خطأ متكرر',
+      consecutiveFailuresDesc:
+        'تعذرت معالجة 3 دفعات متتالية بعد استنفاد محاولات الإعادة (3 محاولات لكل دفعة). يرجى التحقق من اتصال الخادم ومفتاح المشرف.',
+      loopErrorTitle: 'فشل أثناء تنظيف الفيديوهات',
+    },
+  });
 
-          setRecentCleanupChannels((prev) => {
-            const combined = [...mapped.reverse(), ...prev];
-            return combined.slice(0, 10);
-          });
-        }
+  // 3. Scan Cleanup Shorts & Portrait tool hook
+  const scanTool = useBatchTool({
+    name: 'scan',
+    runOnce: ({ reset }) => triggerScanCleanupBatch(reset),
+    interpret: (res) => {
+      const batchChannels = Array.isArray(res.channelsProcessed) ? res.channelsProcessed : [];
+      const isChannelComplete =
+        res.channelComplete === true || (res.channelComplete === undefined && batchChannels.length > 0);
+      const currentTitle = res.title || batchChannels[0]?.title || '';
 
-        // Record failed channels in this batch (if returned in Worker response)
-        const failedInBatch = Array.isArray(res.failedChannels) ? res.failedChannels : [];
-        if (failedInBatch.length > 0) {
-          const mappedFailed = failedInBatch.map((c: any) => ({
-            sourceId: String(c.sourceId || c.id || ''),
-            title: String(c.title || c.name || c.sourceId || 'قناة بدون اسم'),
-            error: String(c.error || c.message || 'تعذر فحص الأرشيف'),
-            timestamp: nowStr,
-          }));
-
-          setCleanupFailedChannelsLog((prev) => {
-            const combined = [...mappedFailed.reverse(), ...prev];
-            return combined.slice(0, 10);
-          });
-        }
-
-        // Check if full pass finished
-        if (res.wrappedAround) {
-          const summaryDesc =
-            skippedBatches > 0
-              ? `تم الانتهاء من فحص أرشيف جميع القنوات (${res.totalChannels || accumulatedChannels} قناة) مع تخطي ${skippedBatches} دفعة بسبب مشاكل شبكة. تم فحص ${accumulatedVideosChecked} فيديو وحذف ${accumulatedDeadVideosRemoved} فيديو ميت.`
-              : `تم الانتهاء من فحص أرشيف جميع القنوات (${res.totalChannels || accumulatedChannels} قناة). تم فحص ${accumulatedVideosChecked} فيديو وحذف ${accumulatedDeadVideosRemoved} فيديو ميت.`;
-          onNotify('success', 'اكتمل تنظيف الفيديوهات الميتة! ✅', summaryDesc);
-          break;
-        }
-
-        if (stopCleanupRef.current) {
-          onNotify(
-            'warning',
-            'تم إيقاف تنظيف الفيديوهات',
-            `توقفت العملية عند معالجة ${accumulatedChannels} قناة (فُحص ${accumulatedVideosChecked} فيديو، حُذف ${accumulatedDeadVideosRemoved} فيديو).`
-          );
-          break;
-        }
-
-        // Wait ~1.5s delay between batch calls
-        await waitWithCleanupCancellation(1500);
-
-        if (stopCleanupRef.current) {
-          onNotify(
-            'warning',
-            'تم إيقاف تنظيف الفيديوهات',
-            `توقفت العملية عند معالجة ${accumulatedChannels} قناة (فُحص ${accumulatedVideosChecked} فيديو، حُذف ${accumulatedDeadVideosRemoved} فيديو).`
-          );
-          break;
-        }
-      }
-    } catch (err: any) {
-      console.error('Error in cleanup batch loop:', err);
-      onNotify('error', 'فشل أثناء تنظيف الفيديوهات', err?.message || 'خطأ أثناء تنفيذ الدفعة.');
-    } finally {
-      setIsCleanupRunning(false);
-      setIsCleanupStopping(false);
-      stopCleanupRef.current = false;
-    }
-  };
-
-  const handleStopCleanup = () => {
-    if (!isCleanupRunning) return;
-    setIsCleanupStopping(true);
-    stopCleanupRef.current = true;
-    onNotify('info', 'جاري إيقاف العملية...', 'سيتم التوقف فور انتهاء المحاولة الحالية.');
-  };
-
-  const handleStartScan = async () => {
-    if (isScanRunning) return;
-    setIsScanRunning(true);
-    setIsScanStopping(false);
-    stopScanRef.current = false;
-    setScanProcessedCount(0);
-    setScanSkippedBatchesCount(0);
-    setScanVideosCheckedTotal(0);
-    setScanRemovedShortDurationTotal(0);
-    setScanRemovedPortraitTotal(0);
-    setRecentScanChannels([]);
-    setScanFailedChannelsLog([]);
-    setScanActiveTab('success');
-
-    onNotify('info', 'بدء تنظيف الفيديوهات القصيرة والعمودية', 'جاري فحص مدة واتجاه الفيديوهات على دفعات وحذف القصير والعمودي...');
-
-    let accumulatedChannels = 0;
-    let accumulatedVideosChecked = 0;
-    let accumulatedShortsRemoved = 0;
-    let accumulatedPortraitRemoved = 0;
-    let skippedBatches = 0;
-    let consecutiveFailedBatches = 0;
-    let isFirstCall = true;
-    setScanCurrentChannelTitle(null);
-
-    try {
-      while (!stopScanRef.current) {
-        let res: {
-          channelsProcessed: Array<{
-            sourceId: string;
-            title: string;
-            videosChecked: number;
-            removedShortDuration: number;
-            removedPortrait: number;
-          }>;
-          totalVideosChecked: number;
-          totalRemovedShortDuration: number;
-          totalRemovedPortrait: number;
-          cursorBefore: number;
-          cursorAfter: number;
-          totalChannels: number;
-          wrappedAround: boolean;
-          channelComplete?: boolean;
-          title?: string;
-          failedChannels?: any[];
-        } | null = null;
-
-        const shouldReset = isFirstCall;
-
-        // Try up to 3 total attempts for the current batch
-        for (let attempt = 1; attempt <= 3; attempt++) {
-          if (stopScanRef.current) break;
-
-          try {
-            res = await triggerScanCleanupBatch(shouldReset);
-            setScanLastBatchDebug({
-              sentReset: shouldReset,
-              cursorBefore: res.cursorBefore,
-              cursorAfter: res.cursorAfter,
-              totalChannels: res.totalChannels,
-              wrappedAround: res.wrappedAround,
-              channelComplete: res.channelComplete,
-              title: res.title,
-              totalVideosChecked: res.totalVideosChecked,
-              totalRemovedShortDuration: res.totalRemovedShortDuration,
-              totalRemovedPortrait: res.totalRemovedPortrait,
-              processedCount: Array.isArray(res.channelsProcessed) ? res.channelsProcessed.length : 0,
-              failedCount: Array.isArray(res.failedChannels) ? res.failedChannels.length : 0,
-              failedChannelsDetail: Array.isArray(res.failedChannels) ? res.failedChannels : [],
-              timestamp: new Date().toLocaleTimeString('ar-EG'),
-            });
-            break; // Batch call succeeded!
-          } catch (batchErr: any) {
-            console.warn(`Scan cleanup batch attempt ${attempt}/3 failed:`, batchErr);
-            if (stopScanRef.current) break;
-
-            if (attempt < 3) {
-              // Wait 3 seconds before next retry of the same batch
-              await waitWithScanCancellation(3000);
-            }
-          }
-        }
-
-        // Mark first call as completed so subsequent batches do not reset
-        isFirstCall = false;
-
-        // If stopped during requests or retries
-        if (stopScanRef.current) {
-          onNotify(
-            'warning',
-            'تم إيقاف تنظيف الفيديوهات القصيرة والعمودية',
-            `توقفت العملية عند معالجة ${accumulatedChannels} قناة (فُحص ${accumulatedVideosChecked} فيديو، حُذف ${accumulatedShortsRemoved} قصير، حُذف ${accumulatedPortraitRemoved} عمودي).`
-          );
-          break;
-        }
-
-        // If all 3 attempts failed for this batch
-        if (!res) {
-          skippedBatches++;
-          setScanSkippedBatchesCount(skippedBatches);
-          consecutiveFailedBatches++;
-
-          if (consecutiveFailedBatches >= 3) {
-            onNotify(
-              'error',
-              'توقف التنظيف بسبب خطأ متكرر',
-              'تعذرت معالجة 3 دفعات متتالية بعد استنفاد محاولات الإعادة (3 محاولات لكل دفعة). يرجى التحقق من اتصال الخادم ومفتاح المشرف.'
-            );
-            break;
-          }
-
-          // Non-fatal: wait 3 seconds before trying next batch
-          await waitWithScanCancellation(3000);
-          continue;
-        }
-
-        // Batch succeeded -> reset consecutive failures counter
-        consecutiveFailedBatches = 0;
-
-        const batchChannels = Array.isArray(res.channelsProcessed) ? res.channelsProcessed : [];
-
-        // Check channel completion state
-        const isChannelComplete = res.channelComplete === true || (res.channelComplete === undefined && batchChannels.length > 0);
-        const currentTitle = res.title || batchChannels[0]?.title || '';
-
-        // If current channel is still mid-progress (channelComplete === false), display active title
-        if (res.channelComplete === false) {
-          setScanCurrentChannelTitle(currentTitle || 'قناة جاري معالجتها');
-        } else {
-          setScanCurrentChannelTitle(null);
-        }
-
-        // Only increment "channels processed" counter when channel is complete (channelComplete === true)
-        if (isChannelComplete) {
-          accumulatedChannels += batchChannels.length > 0 ? batchChannels.length : 1;
-          setScanProcessedCount(accumulatedChannels);
-        }
-
-        const batchChecked = Number(res.totalVideosChecked || 0);
-        const batchShorts = Number(res.totalRemovedShortDuration || 0);
-        const batchPortrait = Number(res.totalRemovedPortrait || 0);
-
-        accumulatedVideosChecked += batchChecked;
-        accumulatedShortsRemoved += batchShorts;
-        accumulatedPortraitRemoved += batchPortrait;
-
-        setScanVideosCheckedTotal(accumulatedVideosChecked);
-        setScanRemovedShortDurationTotal(accumulatedShortsRemoved);
-        setScanRemovedPortraitTotal(accumulatedPortraitRemoved);
-
-        if (typeof res.totalChannels === 'number') {
-          setScanTotalChannels(res.totalChannels);
-        }
-
-        const nowStr = new Date().toLocaleTimeString('ar-EG', {
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-        });
-
-        // Record successful channels (limit to latest 10, newest first)
-        if (batchChannels.length > 0) {
-          const mapped = batchChannels.map((c: any) => ({
-            sourceId: String(c.sourceId || c.id || ''),
-            title: String(c.title || c.name || c.sourceId || 'قناة بدون اسم'),
-            videosChecked: Number(c.videosChecked ?? 0),
-            removedShortDuration: Number(c.removedShortDuration ?? 0),
-            removedPortrait: Number(c.removedPortrait ?? 0),
-            timestamp: nowStr,
-          }));
-
-          setRecentScanChannels((prev) => {
-            const combined = [...mapped.reverse(), ...prev];
-            return combined.slice(0, 10);
-          });
-        }
-
-        // Record failed channels in this batch (if returned in Worker response)
-        const failedInBatch = Array.isArray(res.failedChannels) ? res.failedChannels : [];
-        if (failedInBatch.length > 0) {
-          const mappedFailed = failedInBatch.map((c: any) => ({
-            sourceId: String(c.sourceId || c.id || ''),
-            title: String(c.title || c.name || c.sourceId || 'قناة بدون اسم'),
-            error: String(c.error || c.message || 'تعذر فحص الأرشيف'),
-            timestamp: nowStr,
-          }));
-
-          setScanFailedChannelsLog((prev) => {
-            const combined = [...mappedFailed.reverse(), ...prev];
-            return combined.slice(0, 10);
-          });
-        }
-
-        // Check if full pass finished
-        if (res.wrappedAround) {
-          const summaryDesc =
-            skippedBatches > 0
-              ? `تم الانتهاء من فحص أرشيف جميع القنوات (${res.totalChannels || accumulatedChannels} قناة) مع تخطي ${skippedBatches} دفعة بسبب مشاكل شبكة. تم فحص ${accumulatedVideosChecked} فيديو وحذف ${accumulatedShortsRemoved} فيديو قصير و ${accumulatedPortraitRemoved} فيديو عمودي.`
-              : `تم الانتهاء من فحص أرشيف جميع القنوات (${res.totalChannels || accumulatedChannels} قناة). تم فحص ${accumulatedVideosChecked} فيديو وحذف ${accumulatedShortsRemoved} فيديو قصير و ${accumulatedPortraitRemoved} فيديو عمودي.`;
-          onNotify('success', 'اكتمل تنظيف الفيديوهات القصيرة والعمودية! ✅', summaryDesc);
-          break;
-        }
-
-        if (stopScanRef.current) {
-          onNotify(
-            'warning',
-            'تم إيقاف تنظيف الفيديوهات القصيرة والعمودية',
-            `توقفت العملية عند معالجة ${accumulatedChannels} قناة (فُحص ${accumulatedVideosChecked} فيديو، حُذف ${accumulatedShortsRemoved} قصير، حُذف ${accumulatedPortraitRemoved} عمودي).`
-          );
-          break;
-        }
-
-        // Wait ~1.5s delay between batch calls
-        await waitWithScanCancellation(1500);
-
-        if (stopScanRef.current) {
-          onNotify(
-            'warning',
-            'تم إيقاف تنظيف الفيديوهات القصيرة والعمودية',
-            `توقفت العملية عند معالجة ${accumulatedChannels} قناة (فُحص ${accumulatedVideosChecked} فيديو، حُذف ${accumulatedShortsRemoved} قصير، حُذف ${accumulatedPortraitRemoved} عمودي).`
-          );
-          break;
-        }
-      }
-    } catch (err: any) {
-      console.error('Error in scan cleanup batch loop:', err);
-      onNotify('error', 'فشل أثناء تنظيف الفيديوهات القصيرة والعمودية', err?.message || 'خطأ أثناء تنفيذ الدفعة.');
-    } finally {
-      setIsScanRunning(false);
-      setIsScanStopping(false);
-      stopScanRef.current = false;
-      setScanCurrentChannelTitle(null);
-    }
-  };
-
-  const handleStopScan = () => {
-    if (!isScanRunning) return;
-    setIsScanStopping(true);
-    stopScanRef.current = true;
-    onNotify('info', 'جاري إيقاف العملية...', 'سيتم التوقف فور انتهاء المحاولة الحالية.');
-  };
+      return {
+        successItems: batchChannels.map((c: any) => ({
+          sourceId: String(c.sourceId || c.id || ''),
+          title: String(c.title || c.name || c.sourceId || 'قناة بدون اسم'),
+          videosChecked: Number(c.videosChecked ?? 0),
+          removedShortDuration: Number(c.removedShortDuration ?? 0),
+          removedPortrait: Number(c.removedPortrait ?? 0),
+        })),
+        failedItems: res.failedChannels,
+        totalChannels: res.totalChannels,
+        wrappedAround: res.wrappedAround,
+        channelComplete: isChannelComplete,
+        currentChannelTitle: res.channelComplete === false ? (currentTitle || 'قناة جاري معالجتها') : null,
+        processedDelta: isChannelComplete ? (batchChannels.length > 0 ? batchChannels.length : 1) : 0,
+        metricsDelta: {
+          videosChecked: Number(res.totalVideosChecked || 0),
+          removedShortDuration: Number(res.totalRemovedShortDuration || 0),
+          removedPortrait: Number(res.totalRemovedPortrait || 0),
+        },
+        debugExtra: {
+          channelComplete: res.channelComplete,
+          title: res.title,
+          totalVideosChecked: res.totalVideosChecked,
+          totalRemovedShortDuration: res.totalRemovedShortDuration,
+          totalRemovedPortrait: res.totalRemovedPortrait,
+        },
+      };
+    },
+    onNotify,
+    messages: {
+      startTitle: 'بدء تنظيف الفيديوهات القصيرة والعمودية',
+      startDesc: 'جاري فحص مدة واتجاه الفيديوهات على دفعات وحذف القصير والعمودي...',
+      completeTitle: 'اكتمل تنظيف الفيديوهات القصيرة والعمودية! ✅',
+      getCompleteDesc: ({ totalChannels, processedCount, skippedBatches, metrics }) =>
+        skippedBatches > 0
+          ? `تم الانتهاء من فحص أرشيف جميع القنوات (${totalChannels || processedCount} قناة) مع تخطي ${skippedBatches} دفعة بسبب مشاكل شبكة. تم فحص ${metrics.videosChecked || 0} فيديو وحذف ${metrics.removedShortDuration || 0} فيديو قصير و ${metrics.removedPortrait || 0} فيديو عمودي.`
+          : `تم الانتهاء من فحص أرشيف جميع القنوات (${totalChannels || processedCount} قناة). تم فحص ${metrics.videosChecked || 0} فيديو وحذف ${metrics.removedShortDuration || 0} فيديو قصير و ${metrics.removedPortrait || 0} فيديو عمودي.`,
+      stoppedTitle: 'تم إيقاف تنظيف الفيديوهات القصيرة والعمودية',
+      getStoppedDesc: ({ processedCount, metrics }) =>
+        `توقفت العملية عند معالجة ${processedCount} قناة (فُحص ${metrics.videosChecked || 0} فيديو، حُذف ${metrics.removedShortDuration || 0} قصير، حُذف ${metrics.removedPortrait || 0} عمودي).`,
+      consecutiveFailuresTitle: 'توقف التنظيف بسبب خطأ متكرر',
+      consecutiveFailuresDesc:
+        'تعذرت معالجة 3 دفعات متتالية بعد استنفاد محاولات الإعادة (3 محاولات لكل دفعة). يرجى التحقق من اتصال الخادم ومفتاح المشرف.',
+      loopErrorTitle: 'فشل أثناء تنظيف الفيديوهات القصيرة والعمودية',
+    },
+  });
 
   const loadStatus = async () => {
     setIsLoading(true);
@@ -963,10 +332,10 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
               <h3 className="font-bold text-base text-slate-900 dark:text-slate-100">
                 Backfill عميق لكل القنوات
               </h3>
-              {isBackfillRunning && (
+              {backfillTool.isRunning && (
                 <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 animate-pulse">
                   <span className="w-2 h-2 rounded-full bg-purple-500 animate-ping" />
-                  {isBackfillStopping ? 'جاري الإيقاف...' : 'جاري المعالجة على دفعات...'}
+                  {backfillTool.isStopping ? 'جاري الإيقاف...' : 'جاري المعالجة على دفعات...'}
                 </span>
               )}
             </div>
@@ -978,11 +347,11 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
           <div className="flex items-center gap-2.5 shrink-0 self-end sm:self-auto">
             <button
               id="backfill-start-btn"
-              onClick={handleStartBackfill}
-              disabled={isBackfillRunning}
+              onClick={backfillTool.start}
+              disabled={backfillTool.isRunning}
               className="flex items-center gap-2 px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold transition-all shadow-sm shadow-purple-600/20 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isBackfillRunning && !isBackfillStopping ? (
+              {backfillTool.isRunning && !backfillTool.isStopping ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
                 <Play className="w-3.5 h-3.5 fill-current" />
@@ -992,12 +361,12 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
 
             <button
               id="backfill-stop-btn"
-              onClick={handleStopBackfill}
-              disabled={!isBackfillRunning || isBackfillStopping}
+              onClick={backfillTool.stop}
+              disabled={!backfillTool.isRunning || backfillTool.isStopping}
               className="flex items-center gap-2 px-4 py-2 rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-950/80 text-rose-700 dark:text-rose-300 text-xs font-bold transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Square className="w-3.5 h-3.5 fill-current" />
-              <span>{isBackfillStopping ? 'جاري الإيقاف...' : 'إيقاف'}</span>
+              <span>{backfillTool.isStopping ? 'جاري الإيقاف...' : 'إيقاف'}</span>
             </button>
           </div>
         </div>
@@ -1010,40 +379,40 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
                 حالة التقدم:
               </span>
               <span className="font-mono font-bold text-purple-600 dark:text-purple-400">
-                {backfillTotalChannels !== null
-                  ? `تمت معالجة ${backfillProcessedCount} من ${backfillTotalChannels} قناة`
-                  : `تمت معالجة ${backfillProcessedCount} قناة`}
+                {backfillTool.totalChannels !== null
+                  ? `تمت معالجة ${backfillTool.processedCount} من ${backfillTool.totalChannels} قناة`
+                  : `تمت معالجة ${backfillTool.processedCount} قناة`}
               </span>
             </div>
-            {backfillTotalChannels !== null && backfillTotalChannels > 0 && (
+            {backfillTool.totalChannels !== null && backfillTool.totalChannels > 0 && (
               <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
-                {Math.min(100, Math.round((backfillProcessedCount / backfillTotalChannels) * 100))}%
+                {Math.min(100, Math.round((backfillTool.processedCount / backfillTool.totalChannels) * 100))}%
               </span>
             )}
           </div>
 
-          {backfillTotalChannels !== null && backfillTotalChannels > 0 && (
+          {backfillTool.totalChannels !== null && backfillTool.totalChannels > 0 && (
             <div className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
               <div
                 className="h-full bg-purple-600 dark:bg-purple-500 rounded-full transition-all duration-300 ease-out"
                 style={{
-                  width: `${Math.min(100, Math.max(0, (backfillProcessedCount / backfillTotalChannels) * 100))}%`,
+                  width: `${Math.min(100, Math.max(0, (backfillTool.processedCount / backfillTool.totalChannels) * 100))}%`,
                 }}
               />
             </div>
           )}
 
           {/* Secondary line when batches were skipped due to network/timeout issues */}
-          {skippedBatchesCount > 0 && (
+          {backfillTool.skippedBatchesCount > 0 && (
             <div className="flex items-center gap-1.5 text-[11px] font-medium text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-2.5 py-1 rounded-lg border border-amber-200/60 dark:border-amber-900/40">
               <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-amber-500" />
-              <span>تم تخطي {skippedBatchesCount} دفعة بسبب مشاكل شبكة مؤقتة</span>
+              <span>تم تخطي {backfillTool.skippedBatchesCount} دفعة بسبب مشاكل شبكة مؤقتة</span>
             </div>
           )}
         </div>
 
         {/* Diagnostic Debug Block */}
-        {lastBatchDebug !== null && (
+        {backfillTool.lastBatchDebug !== null && (
           <div className="p-3.5 rounded-xl bg-slate-950 text-slate-200 border border-slate-800 font-mono text-xs overflow-x-auto space-y-1.5">
             <div className="flex items-center justify-between text-[11px] text-amber-400 font-bold border-b border-slate-800/80 pb-1">
               <span className="flex items-center gap-1.5">
@@ -1051,16 +420,16 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
                 آخر استجابة للدفعة (Last Batch Response Diagnostics)
               </span>
               <span className="text-slate-400 font-normal text-[10px]">
-                {lastBatchDebug.timestamp}
+                {backfillTool.lastBatchDebug.timestamp}
               </span>
             </div>
             <div className="text-slate-300 text-[11px] leading-relaxed break-all">
-              آخر استجابة: reset المُرسل = <span className={lastBatchDebug.sentReset ? 'text-emerald-400 font-bold' : 'text-slate-400'}>{String(lastBatchDebug.sentReset)}</span>, cursorBefore = <span className="text-purple-300 font-bold">{lastBatchDebug.cursorBefore}</span>, cursorAfter = <span className="text-purple-300 font-bold">{lastBatchDebug.cursorAfter}</span>, totalChannels = <span className="text-blue-300 font-bold">{lastBatchDebug.totalChannels}</span>, wrappedAround = <span className={lastBatchDebug.wrappedAround ? 'text-amber-400 font-bold' : 'text-slate-400'}>{String(lastBatchDebug.wrappedAround)}</span>, نجح = <span className="text-emerald-400 font-bold">{lastBatchDebug.processedCount}</span>, فشل = <span className={lastBatchDebug.failedCount > 0 ? 'text-rose-400 font-bold' : 'text-slate-400'}>{lastBatchDebug.failedCount}</span>, الوقت = <span className="text-slate-300">{lastBatchDebug.timestamp}</span>
+              آخر استجابة: reset المُرسل = <span className={backfillTool.lastBatchDebug.sentReset ? 'text-emerald-400 font-bold' : 'text-slate-400'}>{String(backfillTool.lastBatchDebug.sentReset)}</span>, cursorBefore = <span className="text-purple-300 font-bold">{backfillTool.lastBatchDebug.cursorBefore}</span>, cursorAfter = <span className="text-purple-300 font-bold">{backfillTool.lastBatchDebug.cursorAfter}</span>, totalChannels = <span className="text-blue-300 font-bold">{backfillTool.lastBatchDebug.totalChannels}</span>, wrappedAround = <span className={backfillTool.lastBatchDebug.wrappedAround ? 'text-amber-400 font-bold' : 'text-slate-400'}>{String(backfillTool.lastBatchDebug.wrappedAround)}</span>, نجح = <span className="text-emerald-400 font-bold">{backfillTool.lastBatchDebug.processedCount}</span>, فشل = <span className={backfillTool.lastBatchDebug.failedCount > 0 ? 'text-rose-400 font-bold' : 'text-slate-400'}>{backfillTool.lastBatchDebug.failedCount}</span>, الوقت = <span className="text-slate-300">{backfillTool.lastBatchDebug.timestamp}</span>
             </div>
 
-            {Array.isArray(lastBatchDebug.failedChannelsDetail) && lastBatchDebug.failedChannelsDetail.length > 0 && (
+            {Array.isArray(backfillTool.lastBatchDebug.failedChannelsDetail) && backfillTool.lastBatchDebug.failedChannelsDetail.length > 0 && (
               <div className="pt-1.5 mt-1.5 border-t border-slate-800/80 space-y-1 text-[11px] text-rose-300/90 font-mono">
-                {lastBatchDebug.failedChannelsDetail.map((fc: any, idx: number) => {
+                {backfillTool.lastBatchDebug.failedChannelsDetail.map((fc: any, idx: number) => {
                   const idOrTitle = fc.sourceId || fc.title || `قناة #${idx + 1}`;
                   const errType = fc.error || 'other';
                   const extra = fc.status !== undefined
@@ -1085,53 +454,53 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => setActiveTab('success')}
+                onClick={() => backfillTool.setActiveTab('success')}
                 className={`flex items-center gap-1.5 font-semibold px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
-                  activeTab === 'success'
+                  backfillTool.activeTab === 'success'
                     ? 'bg-purple-100 dark:bg-purple-950/80 text-purple-700 dark:text-purple-300'
                     : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400'
                 }`}
               >
                 <ListVideo className="w-3.5 h-3.5 text-purple-500" />
                 <span>آخر القنوات المعالجة (أحدث 10)</span>
-                {recentProcessedChannels.length > 0 && (
+                {backfillTool.recentProcessedItems.length > 0 && (
                   <span className="font-mono text-[10px] px-1.5 py-0.2 bg-purple-200/60 dark:bg-purple-900/60 rounded-full">
-                    {recentProcessedChannels.length}
+                    {backfillTool.recentProcessedItems.length}
                   </span>
                 )}
               </button>
 
-              {failedChannelsLog.length > 0 && (
+              {backfillTool.failedItemsLog.length > 0 && (
                 <button
                   type="button"
-                  onClick={() => setActiveTab('failed')}
+                  onClick={() => backfillTool.setActiveTab('failed')}
                   className={`flex items-center gap-1.5 font-semibold px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
-                    activeTab === 'failed'
+                    backfillTool.activeTab === 'failed'
                       ? 'bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300'
                       : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400'
                   }`}
                 >
                   <AlertCircle className="w-3.5 h-3.5 text-rose-500" />
-                  <span>تعذر جلبها ({failedChannelsLog.length})</span>
+                  <span>تعذر جلبها ({backfillTool.failedItemsLog.length})</span>
                 </button>
               )}
             </div>
 
-            {activeTab === 'success' && recentProcessedChannels.length > 0 && (
+            {backfillTool.activeTab === 'success' && backfillTool.recentProcessedItems.length > 0 && (
               <span className="font-mono text-[11px]">
-                {recentProcessedChannels.length} قنوات مسجلة
+                {backfillTool.recentProcessedItems.length} قنوات مسجلة
               </span>
             )}
           </div>
 
-          {activeTab === 'success' ? (
-            recentProcessedChannels.length === 0 ? (
+          {backfillTool.activeTab === 'success' ? (
+            backfillTool.recentProcessedItems.length === 0 ? (
               <div className="p-4 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 text-center text-xs text-slate-400 dark:text-slate-500">
                 لم تبدأ المعالجة بعد. اضغط على &quot;بدء&quot; لمعالجة دفعات القنوات.
               </div>
             ) : (
               <div className="divide-y divide-slate-100 dark:divide-slate-800/80 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-white dark:bg-slate-900/40">
-                {recentProcessedChannels.map((item, idx) => (
+                {backfillTool.recentProcessedItems.map((item, idx) => (
                   <div
                     key={`${item.sourceId}-${idx}-${item.timestamp}`}
                     className="px-3.5 py-2.5 flex items-center justify-between gap-3 text-xs hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
@@ -1165,7 +534,7 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
             )
           ) : (
             <div className="divide-y divide-slate-100 dark:divide-slate-800/80 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-white dark:bg-slate-900/40">
-              {failedChannelsLog.map((item, idx) => (
+              {backfillTool.failedItemsLog.map((item, idx) => (
                 <div
                   key={`${item.sourceId}-${idx}-${item.timestamp}`}
                   className="px-3.5 py-2.5 flex items-center justify-between gap-3 text-xs hover:bg-rose-50/50 dark:hover:bg-rose-950/20 transition-colors"
@@ -1211,10 +580,10 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
               <h3 className="font-bold text-base text-slate-900 dark:text-slate-100">
                 تنظيف الفيديوهات الميتة
               </h3>
-              {isCleanupRunning && (
+              {cleanupTool.isRunning && (
                 <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 animate-pulse">
                   <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
-                  {isCleanupStopping ? 'جاري الإيقاف...' : 'جاري الفحص والتنظيف...'}
+                  {cleanupTool.isStopping ? 'جاري الإيقاف...' : 'جاري الفحص والتنظيف...'}
                 </span>
               )}
             </div>
@@ -1226,11 +595,11 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
           <div className="flex items-center gap-2.5 shrink-0 self-end sm:self-auto">
             <button
               id="cleanup-start-btn"
-              onClick={handleStartCleanup}
-              disabled={isCleanupRunning}
+              onClick={cleanupTool.start}
+              disabled={cleanupTool.isRunning}
               className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-all shadow-sm shadow-amber-600/20 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isCleanupRunning && !isCleanupStopping ? (
+              {cleanupTool.isRunning && !cleanupTool.isStopping ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
                 <Play className="w-3.5 h-3.5 fill-current" />
@@ -1240,12 +609,12 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
 
             <button
               id="cleanup-stop-btn"
-              onClick={handleStopCleanup}
-              disabled={!isCleanupRunning || isCleanupStopping}
+              onClick={cleanupTool.stop}
+              disabled={!cleanupTool.isRunning || cleanupTool.isStopping}
               className="flex items-center gap-2 px-4 py-2 rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-950/80 text-rose-700 dark:text-rose-300 text-xs font-bold transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Square className="w-3.5 h-3.5 fill-current" />
-              <span>{isCleanupStopping ? 'جاري الإيقاف...' : 'إيقاف'}</span>
+              <span>{cleanupTool.isStopping ? 'جاري الإيقاف...' : 'إيقاف'}</span>
             </button>
           </div>
         </div>
@@ -1258,14 +627,14 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
                 حالة التقدم:
               </span>
               <span className="font-mono font-bold text-amber-600 dark:text-amber-400">
-                {cleanupTotalChannels !== null
-                  ? `تمت معالجة ${cleanupProcessedCount} من ${cleanupTotalChannels} قناة`
-                  : `تمت معالجة ${cleanupProcessedCount} قناة`}
+                {cleanupTool.totalChannels !== null
+                  ? `تمت معالجة ${cleanupTool.processedCount} من ${cleanupTool.totalChannels} قناة`
+                  : `تمت معالجة ${cleanupTool.processedCount} قناة`}
               </span>
             </div>
-            {cleanupTotalChannels !== null && cleanupTotalChannels > 0 && (
+            {cleanupTool.totalChannels !== null && cleanupTool.totalChannels > 0 && (
               <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
-                {Math.min(100, Math.round((cleanupProcessedCount / cleanupTotalChannels) * 100))}%
+                {Math.min(100, Math.round((cleanupTool.processedCount / cleanupTool.totalChannels) * 100))}%
               </span>
             )}
           </div>
@@ -1275,33 +644,33 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
             <div className="flex items-center gap-1.5">
               <span className="text-slate-500 dark:text-slate-400">الإجمالي:</span>
               <span className="font-mono font-bold text-slate-700 dark:text-slate-200">
-                تم فحص {cleanupVideosCheckedTotal} فيديو، حُذف {cleanupDeadVideosRemovedTotal} فيديو ميت
+                تم فحص {cleanupTool.metrics.videosChecked || 0} فيديو، حُذف {cleanupTool.metrics.deadVideosRemoved || 0} فيديو ميت
               </span>
             </div>
           </div>
 
-          {cleanupTotalChannels !== null && cleanupTotalChannels > 0 && (
+          {cleanupTool.totalChannels !== null && cleanupTool.totalChannels > 0 && (
             <div className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
               <div
                 className="h-full bg-amber-600 dark:bg-amber-500 rounded-full transition-all duration-300 ease-out"
                 style={{
-                  width: `${Math.min(100, Math.max(0, (cleanupProcessedCount / cleanupTotalChannels) * 100))}%`,
+                  width: `${Math.min(100, Math.max(0, (cleanupTool.processedCount / cleanupTool.totalChannels) * 100))}%`,
                 }}
               />
             </div>
           )}
 
           {/* Secondary line when batches were skipped due to network/timeout issues */}
-          {cleanupSkippedBatchesCount > 0 && (
+          {cleanupTool.skippedBatchesCount > 0 && (
             <div className="flex items-center gap-1.5 text-[11px] font-medium text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-2.5 py-1 rounded-lg border border-amber-200/60 dark:border-amber-900/40">
               <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-amber-500" />
-              <span>تم تخطي {cleanupSkippedBatchesCount} دفعة بسبب مشاكل شبكة مؤقتة</span>
+              <span>تم تخطي {cleanupTool.skippedBatchesCount} دفعة بسبب مشاكل شبكة مؤقتة</span>
             </div>
           )}
         </div>
 
         {/* Diagnostic Debug Block */}
-        {cleanupLastBatchDebug !== null && (
+        {cleanupTool.lastBatchDebug !== null && (
           <div className="p-3.5 rounded-xl bg-slate-950 text-slate-200 border border-slate-800 font-mono text-xs overflow-x-auto space-y-1.5">
             <div className="flex items-center justify-between text-[11px] text-amber-400 font-bold border-b border-slate-800/80 pb-1">
               <span className="flex items-center gap-1.5">
@@ -1309,16 +678,16 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
                 آخر استجابة للدفعة (Last Batch Response Diagnostics)
               </span>
               <span className="text-slate-400 font-normal text-[10px]">
-                {cleanupLastBatchDebug.timestamp}
+                {cleanupTool.lastBatchDebug.timestamp}
               </span>
             </div>
             <div className="text-slate-300 text-[11px] leading-relaxed break-all">
-              آخر استجابة: reset المُرسل = <span className={cleanupLastBatchDebug.sentReset ? 'text-emerald-400 font-bold' : 'text-slate-400'}>{String(cleanupLastBatchDebug.sentReset)}</span>, cursorBefore = <span className="text-purple-300 font-bold">{cleanupLastBatchDebug.cursorBefore}</span>, cursorAfter = <span className="text-purple-300 font-bold">{cleanupLastBatchDebug.cursorAfter}</span>, totalChannels = <span className="text-blue-300 font-bold">{cleanupLastBatchDebug.totalChannels}</span>, wrappedAround = <span className={cleanupLastBatchDebug.wrappedAround ? 'text-amber-400 font-bold' : 'text-slate-400'}>{String(cleanupLastBatchDebug.wrappedAround)}</span>, totalVideosChecked = <span className="text-cyan-300 font-bold">{cleanupLastBatchDebug.totalVideosChecked}</span>, totalDeadVideosRemoved = <span className="text-rose-400 font-bold">{cleanupLastBatchDebug.totalDeadVideosRemoved}</span>, قنوات فُحصت = <span className="text-emerald-400 font-bold">{cleanupLastBatchDebug.processedCount}</span>, فشل = <span className={cleanupLastBatchDebug.failedCount > 0 ? 'text-rose-400 font-bold' : 'text-slate-400'}>{cleanupLastBatchDebug.failedCount}</span>, الوقت = <span className="text-slate-300">{cleanupLastBatchDebug.timestamp}</span>
+              آخر استجابة: reset المُرسل = <span className={cleanupTool.lastBatchDebug.sentReset ? 'text-emerald-400 font-bold' : 'text-slate-400'}>{String(cleanupTool.lastBatchDebug.sentReset)}</span>, cursorBefore = <span className="text-purple-300 font-bold">{cleanupTool.lastBatchDebug.cursorBefore}</span>, cursorAfter = <span className="text-purple-300 font-bold">{cleanupTool.lastBatchDebug.cursorAfter}</span>, totalChannels = <span className="text-blue-300 font-bold">{cleanupTool.lastBatchDebug.totalChannels}</span>, wrappedAround = <span className={cleanupTool.lastBatchDebug.wrappedAround ? 'text-amber-400 font-bold' : 'text-slate-400'}>{String(cleanupTool.lastBatchDebug.wrappedAround)}</span>, totalVideosChecked = <span className="text-cyan-300 font-bold">{cleanupTool.lastBatchDebug.totalVideosChecked}</span>, totalDeadVideosRemoved = <span className="text-rose-400 font-bold">{cleanupTool.lastBatchDebug.totalDeadVideosRemoved}</span>, قنوات فُحصت = <span className="text-emerald-400 font-bold">{cleanupTool.lastBatchDebug.processedCount}</span>, فشل = <span className={cleanupTool.lastBatchDebug.failedCount > 0 ? 'text-rose-400 font-bold' : 'text-slate-400'}>{cleanupTool.lastBatchDebug.failedCount}</span>, الوقت = <span className="text-slate-300">{cleanupTool.lastBatchDebug.timestamp}</span>
             </div>
 
-            {Array.isArray(cleanupLastBatchDebug.failedChannelsDetail) && cleanupLastBatchDebug.failedChannelsDetail.length > 0 && (
+            {Array.isArray(cleanupTool.lastBatchDebug.failedChannelsDetail) && cleanupTool.lastBatchDebug.failedChannelsDetail.length > 0 && (
               <div className="pt-1.5 mt-1.5 border-t border-slate-800/80 space-y-1 text-[11px] text-rose-300/90 font-mono">
-                {cleanupLastBatchDebug.failedChannelsDetail.map((fc: any, idx: number) => {
+                {cleanupTool.lastBatchDebug.failedChannelsDetail.map((fc: any, idx: number) => {
                   const idOrTitle = fc.sourceId || fc.title || `قناة #${idx + 1}`;
                   const errType = fc.error || 'other';
                   const extra = fc.status !== undefined
@@ -1343,28 +712,28 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => setCleanupActiveTab('success')}
+                onClick={() => cleanupTool.setActiveTab('success')}
                 className={`flex items-center gap-1.5 font-semibold px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
-                  cleanupActiveTab === 'success'
+                  cleanupTool.activeTab === 'success'
                     ? 'bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300'
                     : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400'
                 }`}
               >
                 <ListVideo className="w-3.5 h-3.5 text-amber-500" />
                 <span>آخر القنوات المفحوصة (أحدث 10)</span>
-                {recentCleanupChannels.length > 0 && (
+                {cleanupTool.recentProcessedItems.length > 0 && (
                   <span className="font-mono text-[10px] px-1.5 py-0.2 bg-amber-200/60 dark:bg-amber-900/60 rounded-full">
-                    {recentCleanupChannels.length}
+                    {cleanupTool.recentProcessedItems.length}
                   </span>
                 )}
               </button>
 
-              {cleanupFailedChannelsLog.length > 0 && (
+              {cleanupTool.failedItemsLog.length > 0 && (
                 <button
                   type="button"
-                  onClick={() => setCleanupActiveTab('failed')}
+                  onClick={() => cleanupTool.setActiveTab('failed')}
                   className={`flex items-center gap-1.5 font-semibold px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
-                    cleanupActiveTab === 'failed'
+                    cleanupTool.activeTab === 'failed'
                       ? 'bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300'
                       : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400'
                   }`}
@@ -1372,7 +741,7 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
                   <AlertCircle className="w-3.5 h-3.5 text-rose-500" />
                   <span>قنوات تعذر فحصها</span>
                   <span className="font-mono text-[10px] px-1.5 py-0.2 bg-rose-200/60 dark:bg-rose-900/60 text-rose-800 dark:text-rose-200 rounded-full font-bold">
-                    {cleanupFailedChannelsLog.length}
+                    {cleanupTool.failedItemsLog.length}
                   </span>
                 </button>
               )}
@@ -1384,14 +753,14 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
           </div>
 
           {/* Success Tab Content */}
-          {cleanupActiveTab === 'success' && (
+          {cleanupTool.activeTab === 'success' && (
             <div className="space-y-1.5">
-              {recentCleanupChannels.length === 0 ? (
+              {cleanupTool.recentProcessedItems.length === 0 ? (
                 <div className="py-4 text-center text-xs text-slate-400 dark:text-slate-500 border border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
                   لم يتم فحص أي قنوات بعد في هذه الدورة. اضغط &quot;بدء&quot; لتنظيف الأرشيف.
                 </div>
               ) : (
-                recentCleanupChannels.map((item, idx) => (
+                cleanupTool.recentProcessedItems.map((item, idx) => (
                   <div
                     key={`${item.sourceId}-${idx}`}
                     className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/40 dark:border-slate-800/60 text-xs"
@@ -1412,7 +781,7 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
                       <span className="px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-mono text-[11px] font-semibold">
                         فُحص {item.videosChecked} فيديو
                       </span>
-                      {item.deadVideosRemoved > 0 && (
+                      {(item.deadVideosRemoved ?? 0) > 0 && (
                         <span className="px-2 py-0.5 rounded-md bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 font-mono text-[11px] font-semibold">
                           حُذف {item.deadVideosRemoved} ميت
                         </span>
@@ -1428,9 +797,9 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
           )}
 
           {/* Failed Tab Content */}
-          {cleanupActiveTab === 'failed' && (
+          {cleanupTool.activeTab === 'failed' && (
             <div className="space-y-1.5">
-              {cleanupFailedChannelsLog.map((item, idx) => (
+              {cleanupTool.failedItemsLog.map((item, idx) => (
                 <div
                   key={`failed-${item.sourceId}-${idx}`}
                   className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-rose-50/50 dark:bg-rose-950/20 border border-rose-200/40 dark:border-rose-900/40 text-xs"
@@ -1474,10 +843,10 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
               <h3 className="font-bold text-base text-slate-900 dark:text-slate-100">
                 تنظيف الفيديوهات القصيرة والعمودية
               </h3>
-              {isScanRunning && (
+              {scanTool.isRunning && (
                 <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 animate-pulse">
                   <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
-                  {isScanStopping ? 'جاري الإيقاف...' : 'جاري الفحص والتنظيف...'}
+                  {scanTool.isStopping ? 'جاري الإيقاف...' : 'جاري الفحص والتنظيف...'}
                 </span>
               )}
             </div>
@@ -1489,11 +858,11 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
           <div className="flex items-center gap-2.5 shrink-0 self-end sm:self-auto">
             <button
               id="scan-cleanup-start-btn"
-              onClick={handleStartScan}
-              disabled={isScanRunning}
+              onClick={scanTool.start}
+              disabled={scanTool.isRunning}
               className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-all shadow-sm shadow-amber-600/20 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isScanRunning && !isScanStopping ? (
+              {scanTool.isRunning && !scanTool.isStopping ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
                 <Play className="w-3.5 h-3.5 fill-current" />
@@ -1503,12 +872,12 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
 
             <button
               id="scan-cleanup-stop-btn"
-              onClick={handleStopScan}
-              disabled={!isScanRunning || isScanStopping}
+              onClick={scanTool.stop}
+              disabled={!scanTool.isRunning || scanTool.isStopping}
               className="flex items-center gap-2 px-4 py-2 rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-950/80 text-rose-700 dark:text-rose-300 text-xs font-bold transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Square className="w-3.5 h-3.5 fill-current" />
-              <span>{isScanStopping ? 'جاري الإيقاف...' : 'إيقاف'}</span>
+              <span>{scanTool.isStopping ? 'جاري الإيقاف...' : 'إيقاف'}</span>
             </button>
           </div>
         </div>
@@ -1521,14 +890,14 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
                 حالة التقدم:
               </span>
               <span className="font-mono font-bold text-amber-600 dark:text-amber-400">
-                {scanTotalChannels !== null
-                  ? `تمت معالجة ${scanProcessedCount} من ${scanTotalChannels} قناة`
-                  : `تمت معالجة ${scanProcessedCount} قناة`}
+                {scanTool.totalChannels !== null
+                  ? `تمت معالجة ${scanTool.processedCount} من ${scanTool.totalChannels} قناة`
+                  : `تمت معالجة ${scanTool.processedCount} قناة`}
               </span>
             </div>
-            {scanTotalChannels !== null && scanTotalChannels > 0 && (
+            {scanTool.totalChannels !== null && scanTool.totalChannels > 0 && (
               <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
-                {Math.min(100, Math.round((scanProcessedCount / scanTotalChannels) * 100))}%
+                {Math.min(100, Math.round((scanTool.processedCount / scanTool.totalChannels) * 100))}%
               </span>
             )}
           </div>
@@ -1538,41 +907,41 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
             <div className="flex items-center gap-1.5">
               <span className="text-slate-500 dark:text-slate-400">الإجمالي:</span>
               <span className="font-mono font-bold text-slate-700 dark:text-slate-200">
-                تم فحص {scanVideosCheckedTotal} فيديو — حُذف {scanRemovedShortDurationTotal} (قصير المدة)، حُذف {scanRemovedPortraitTotal} (عمودي)
+                تم فحص {scanTool.metrics.videosChecked || 0} فيديو — حُذف {scanTool.metrics.removedShortDuration || 0} (قصير المدة)، حُذف {scanTool.metrics.removedPortrait || 0} (عمودي)
               </span>
             </div>
           </div>
 
           {/* Status line shown while current channel is mid-progress (channelComplete === false) */}
-          {isScanRunning && scanCurrentChannelTitle && (
+          {scanTool.isRunning && scanTool.currentChannelTitle && (
             <div className="flex items-center gap-2 text-xs font-medium text-amber-700 dark:text-amber-400 bg-amber-50/80 dark:bg-amber-950/50 px-2.5 py-1.5 rounded-lg border border-amber-200/60 dark:border-amber-900/40">
               <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0 text-amber-500" />
-              <span>جاري معالجة: {scanCurrentChannelTitle} (متابعة...)</span>
+              <span>جاري معالجة: {scanTool.currentChannelTitle} (متابعة...)</span>
             </div>
           )}
 
-          {scanTotalChannels !== null && scanTotalChannels > 0 && (
+          {scanTool.totalChannels !== null && scanTool.totalChannels > 0 && (
             <div className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
               <div
                 className="h-full bg-amber-600 dark:bg-amber-500 rounded-full transition-all duration-300 ease-out"
                 style={{
-                  width: `${Math.min(100, Math.max(0, (scanProcessedCount / scanTotalChannels) * 100))}%`,
+                  width: `${Math.min(100, Math.max(0, (scanTool.processedCount / scanTool.totalChannels) * 100))}%`,
                 }}
               />
             </div>
           )}
 
           {/* Secondary line when batches were skipped due to network/timeout issues */}
-          {scanSkippedBatchesCount > 0 && (
+          {scanTool.skippedBatchesCount > 0 && (
             <div className="flex items-center gap-1.5 text-[11px] font-medium text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-2.5 py-1 rounded-lg border border-amber-200/60 dark:border-amber-900/40">
               <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-amber-500" />
-              <span>تم تخطي {scanSkippedBatchesCount} دفعة بسبب مشاكل شبكة مؤقتة</span>
+              <span>تم تخطي {scanTool.skippedBatchesCount} دفعة بسبب مشاكل شبكة مؤقتة</span>
             </div>
           )}
         </div>
 
         {/* Diagnostic Debug Block */}
-        {scanLastBatchDebug !== null && (
+        {scanTool.lastBatchDebug !== null && (
           <div className="p-3.5 rounded-xl bg-slate-950 text-slate-200 border border-slate-800 font-mono text-xs overflow-x-auto space-y-1.5">
             <div className="flex items-center justify-between text-[11px] text-amber-400 font-bold border-b border-slate-800/80 pb-1">
               <span className="flex items-center gap-1.5">
@@ -1580,16 +949,16 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
                 آخر استجابة للدفعة (Last Batch Response Diagnostics)
               </span>
               <span className="text-slate-400 font-normal text-[10px]">
-                {scanLastBatchDebug.timestamp}
+                {scanTool.lastBatchDebug.timestamp}
               </span>
             </div>
             <div className="text-slate-300 text-[11px] leading-relaxed break-all">
-              آخر استجابة: reset المُرسل = <span className={scanLastBatchDebug.sentReset ? 'text-emerald-400 font-bold' : 'text-slate-400'}>{String(scanLastBatchDebug.sentReset)}</span>, cursorBefore = <span className="text-purple-300 font-bold">{scanLastBatchDebug.cursorBefore}</span>, cursorAfter = <span className="text-purple-300 font-bold">{scanLastBatchDebug.cursorAfter}</span>, totalChannels = <span className="text-blue-300 font-bold">{scanLastBatchDebug.totalChannels}</span>, channelComplete = <span className={scanLastBatchDebug.channelComplete === false ? 'text-amber-400 font-bold' : 'text-emerald-400 font-bold'}>{String(scanLastBatchDebug.channelComplete ?? true)}</span>, wrappedAround = <span className={scanLastBatchDebug.wrappedAround ? 'text-amber-400 font-bold' : 'text-slate-400'}>{String(scanLastBatchDebug.wrappedAround)}</span>, totalVideosChecked = <span className="text-cyan-300 font-bold">{scanLastBatchDebug.totalVideosChecked}</span>, totalRemovedShortDuration = <span className="text-rose-400 font-bold">{scanLastBatchDebug.totalRemovedShortDuration}</span>, totalRemovedPortrait = <span className="text-rose-400 font-bold">{scanLastBatchDebug.totalRemovedPortrait}</span>, قنوات فُحصت = <span className="text-emerald-400 font-bold">{scanLastBatchDebug.processedCount}</span>, فشل = <span className={scanLastBatchDebug.failedCount > 0 ? 'text-rose-400 font-bold' : 'text-slate-400'}>{scanLastBatchDebug.failedCount}</span>, الوقت = <span className="text-slate-300">{scanLastBatchDebug.timestamp}</span>
+              آخر استجابة: reset المُرسل = <span className={scanTool.lastBatchDebug.sentReset ? 'text-emerald-400 font-bold' : 'text-slate-400'}>{String(scanTool.lastBatchDebug.sentReset)}</span>, cursorBefore = <span className="text-purple-300 font-bold">{scanTool.lastBatchDebug.cursorBefore}</span>, cursorAfter = <span className="text-purple-300 font-bold">{scanTool.lastBatchDebug.cursorAfter}</span>, totalChannels = <span className="text-blue-300 font-bold">{scanTool.lastBatchDebug.totalChannels}</span>, channelComplete = <span className={scanTool.lastBatchDebug.channelComplete === false ? 'text-amber-400 font-bold' : 'text-emerald-400 font-bold'}>{String(scanTool.lastBatchDebug.channelComplete ?? true)}</span>, wrappedAround = <span className={scanTool.lastBatchDebug.wrappedAround ? 'text-amber-400 font-bold' : 'text-slate-400'}>{String(scanTool.lastBatchDebug.wrappedAround)}</span>, totalVideosChecked = <span className="text-cyan-300 font-bold">{scanTool.lastBatchDebug.totalVideosChecked}</span>, totalRemovedShortDuration = <span className="text-rose-400 font-bold">{scanTool.lastBatchDebug.totalRemovedShortDuration}</span>, totalRemovedPortrait = <span className="text-rose-400 font-bold">{scanTool.lastBatchDebug.totalRemovedPortrait}</span>, قنوات فُحصت = <span className="text-emerald-400 font-bold">{scanTool.lastBatchDebug.processedCount}</span>, فشل = <span className={scanTool.lastBatchDebug.failedCount > 0 ? 'text-rose-400 font-bold' : 'text-slate-400'}>{scanTool.lastBatchDebug.failedCount}</span>, الوقت = <span className="text-slate-300">{scanTool.lastBatchDebug.timestamp}</span>
             </div>
 
-            {Array.isArray(scanLastBatchDebug.failedChannelsDetail) && scanLastBatchDebug.failedChannelsDetail.length > 0 && (
+            {Array.isArray(scanTool.lastBatchDebug.failedChannelsDetail) && scanTool.lastBatchDebug.failedChannelsDetail.length > 0 && (
               <div className="pt-1.5 mt-1.5 border-t border-slate-800/80 space-y-1 text-[11px] text-rose-300/90 font-mono">
-                {scanLastBatchDebug.failedChannelsDetail.map((fc: any, idx: number) => {
+                {scanTool.lastBatchDebug.failedChannelsDetail.map((fc: any, idx: number) => {
                   const idOrTitle = fc.sourceId || fc.title || `قناة #${idx + 1}`;
                   const errType = fc.error || 'other';
                   const extra = fc.status !== undefined
@@ -1614,28 +983,28 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => setScanActiveTab('success')}
+                onClick={() => scanTool.setActiveTab('success')}
                 className={`flex items-center gap-1.5 font-semibold px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
-                  scanActiveTab === 'success'
+                  scanTool.activeTab === 'success'
                     ? 'bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300'
                     : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400'
                 }`}
               >
                 <ListVideo className="w-3.5 h-3.5 text-amber-500" />
                 <span>آخر القنوات المفحوصة (أحدث 10)</span>
-                {recentScanChannels.length > 0 && (
+                {scanTool.recentProcessedItems.length > 0 && (
                   <span className="font-mono text-[10px] px-1.5 py-0.2 bg-amber-200/60 dark:bg-amber-900/60 rounded-full">
-                    {recentScanChannels.length}
+                    {scanTool.recentProcessedItems.length}
                   </span>
                 )}
               </button>
 
-              {scanFailedChannelsLog.length > 0 && (
+              {scanTool.failedItemsLog.length > 0 && (
                 <button
                   type="button"
-                  onClick={() => setScanActiveTab('failed')}
+                  onClick={() => scanTool.setActiveTab('failed')}
                   className={`flex items-center gap-1.5 font-semibold px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
-                    scanActiveTab === 'failed'
+                    scanTool.activeTab === 'failed'
                       ? 'bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300'
                       : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400'
                   }`}
@@ -1643,7 +1012,7 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
                   <AlertCircle className="w-3.5 h-3.5 text-rose-500" />
                   <span>قنوات تعذر فحصها</span>
                   <span className="font-mono text-[10px] px-1.5 py-0.2 bg-rose-200/60 dark:bg-rose-900/60 text-rose-800 dark:text-rose-200 rounded-full font-bold">
-                    {scanFailedChannelsLog.length}
+                    {scanTool.failedItemsLog.length}
                   </span>
                 </button>
               )}
@@ -1655,14 +1024,14 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
           </div>
 
           {/* Success Tab Content */}
-          {scanActiveTab === 'success' && (
+          {scanTool.activeTab === 'success' && (
             <div className="space-y-1.5">
-              {recentScanChannels.length === 0 ? (
+              {scanTool.recentProcessedItems.length === 0 ? (
                 <div className="py-4 text-center text-xs text-slate-400 dark:text-slate-500 border border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
                   لم يتم فحص أي قنوات بعد في هذه الدورة. اضغط &quot;بدء&quot; لتنظيف الأرشيف.
                 </div>
               ) : (
-                recentScanChannels.map((item, idx) => (
+                scanTool.recentProcessedItems.map((item, idx) => (
                   <div
                     key={`${item.sourceId}-${idx}`}
                     className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/40 dark:border-slate-800/60 text-xs"
@@ -1683,9 +1052,9 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
                       <span className="px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-mono text-[11px] font-semibold">
                         فُحص {item.videosChecked} فيديو
                       </span>
-                      {(item.removedShortDuration > 0 || item.removedPortrait > 0) && (
+                      {((item.removedShortDuration ?? 0) > 0 || (item.removedPortrait ?? 0) > 0) && (
                         <span className="px-2 py-0.5 rounded-md bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 font-mono text-[11px] font-semibold">
-                          حُذف {item.removedShortDuration} قصير / {item.removedPortrait} عمودي
+                          حُذف {item.removedShortDuration ?? 0} قصير / {item.removedPortrait ?? 0} عمودي
                         </span>
                       )}
                       <span className="text-[10px] font-mono text-slate-400">
@@ -1699,9 +1068,9 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
           )}
 
           {/* Failed Tab Content */}
-          {scanActiveTab === 'failed' && (
+          {scanTool.activeTab === 'failed' && (
             <div className="space-y-1.5">
-              {scanFailedChannelsLog.map((item, idx) => (
+              {scanTool.failedItemsLog.map((item, idx) => (
                 <div
                   key={`failed-${item.sourceId}-${idx}`}
                   className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-rose-50/50 dark:bg-rose-950/20 border border-rose-200/40 dark:border-rose-900/40 text-xs"
