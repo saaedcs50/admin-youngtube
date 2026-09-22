@@ -619,39 +619,33 @@ export async function deleteChannelVideo(sourceId: string, videoId: string): Pro
   });
 }
 
-export async function triggerChannelBackfill(
-  sourceId: string,
-  sourceType: string,
-  title: string
-): Promise<{
+export interface BackfillChannelResponse {
+  sourceId?: string;
+  addedVideosCount?: number;
+  totalVideosInArchive?: number;
+  hasMore?: boolean;
   ok?: boolean;
   success?: boolean;
   message?: string;
+  error?: string;
   count?: number;
   added?: number;
   [key: string]: any;
-}> {
-  const params = new URLSearchParams({
-    id: sourceId,
-    sourceType: sourceType || 'channel',
-    deepen: '1',
-    max: '2000',
-  });
-  const res = await apiRequest<{
-    sourceId: string;
-    videos: any[];
-    count: number;
-    nextPageToken: string | null;
-    deepened: boolean;
-  }>(`/api/channel-archive?${params.toString()}`, { method: 'GET' });
-  return {
-    success: res.deepened,
-    count: res.count,
-    message: res.deepened
-      ? undefined
-      : 'لم يتم جلب فيديوهات إضافية (قد يكون الأرشيف محدّث بالفعل أو مفتاح API غير متاح).',
-  };
 }
+
+export async function triggerChannelBackfill(
+  sourceId: string,
+  resetOrSourceType?: boolean | string,
+  _title?: string
+): Promise<BackfillChannelResponse> {
+  const reset = typeof resetOrSourceType === 'boolean' ? resetOrSourceType : false;
+  return apiRequest<BackfillChannelResponse>('/api/admin/backfill-channel', {
+    method: 'POST',
+    body: JSON.stringify({ sourceId, reset }),
+  });
+}
+
+export const backfillChannel = triggerChannelBackfill;
 
 export async function fetchAnnouncements(): Promise<AnnouncementItem[]> {
   const res = await apiRequest<any>('/api/announcements?all=true');

@@ -55,6 +55,8 @@ export const ChannelArchiveManager: React.FC<ChannelArchiveManagerProps> = ({
   const [deletingVideoId, setDeletingVideoId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
+  const [hasMore, setHasMore] = useState<boolean | null>(null);
+
   // Load archive data on mount or sourceId change
   const loadArchive = async (isRefetch: boolean = false) => {
     if (!isRefetch) {
@@ -91,20 +93,60 @@ export const ChannelArchiveManager: React.FC<ChannelArchiveManagerProps> = ({
   const handleDeepBackfill = async () => {
     if (isBackfilling) return;
     setIsBackfilling(true);
-    onNotify('info', 'بدء تعميق الأرشيف...', 'جاري جلب الفيديوهات القديمة من يوتيوب وتحديث الأرشيف...');
+    onNotify('info', 'بدء تعميق الأرشيف...', 'جاري جلب الفيديوهات عبر خادم الإنتاج وتحديث الأرشيف...');
     try {
-      const res = await triggerChannelBackfill(sourceId, sourceType, channelTitle);
-      const addedCount = res?.count ?? res?.added ?? 0;
-      onNotify(
-        'success',
-        'اكتمل تعميق الأرشيف بنجاح',
-        res?.message || (addedCount > 0 ? `تمت إضافة وتحديث ${addedCount} فيديو للأرشيف.` : 'تم فحص الأرشيف وتحديثه بنجاح.')
-      );
-      // Refetch the list to show updated archive
+      const res = await triggerChannelBackfill(sourceId, false);
+      const addedCount = typeof res?.addedVideosCount === 'number'
+        ? res.addedVideosCount
+        : Number(res?.added ?? res?.count ?? 0);
+      const totalCount = typeof res?.totalVideosInArchive === 'number'
+        ? res.totalVideosInArchive
+        : Number(res?.total ?? 0);
+      const hasMoreAvailable = Boolean(res?.hasMore);
+      setHasMore(hasMoreAvailable);
+
+      if (addedCount === 0 && totalCount === 0) {
+        onNotify(
+          'error',
+          'تعذّر الجلب',
+          'تعذّر الجلب — تحقق من مفتاح YouTube على السيرفر أو أعد المحاولة.'
+        );
+      } else {
+        if (hasMoreAvailable) {
+          onNotify(
+            'success',
+            'تم جلب دفعة من الأرشيف',
+            `تمت إضافة ${addedCount} فيديو (إجمالي الأرشيف: ${totalCount}). تم جلب دفعة — اضغط تعميق مرة أخرى للمزيد.`
+          );
+        } else {
+          onNotify(
+            'success',
+            'اكتمل تعميق الأرشيف بنجاح',
+            addedCount > 0
+              ? `تمت إضافة ${addedCount} فيديو بنجاح للأرشيف (إجمالي الأرشيف: ${totalCount} فيديو).`
+              : `تم فحص الأرشيف، وهو محدّث بالكامل (إجمالي الأرشيف: ${totalCount} فيديو).`
+          );
+        }
+      }
+
+      // Reload archive list via GET /api/channel-archive?id=
       await loadArchive(true);
     } catch (err: any) {
       console.error('Error during channel backfill:', err);
-      onNotify('error', 'فشل تعميق الأرشيف', err?.message || 'حدث خطأ أثناء محاولة تعميق الأرشيف.');
+      const errMsg = String(err?.message || '');
+      if (errMsg.includes('no_api_key')) {
+        onNotify(
+          'error',
+          'تعذّر الجلب',
+          'تعذّر الجلب — تحقق من مفتاح YouTube على السيرفر أو أعد المحاولة.'
+        );
+      } else {
+        onNotify(
+          'error',
+          'فشل تعميق الأرشيف',
+          err?.message || 'تعذّر الجلب — تحقق من مفتاح YouTube على السيرفر أو أعد المحاولة.'
+        );
+      }
     } finally {
       setIsBackfilling(false);
     }
@@ -198,7 +240,13 @@ export const ChannelArchiveManager: React.FC<ChannelArchiveManagerProps> = ({
               ) : (
                 <Zap className="w-3.5 h-3.5 fill-current" />
               )}
-              <span>{isBackfilling ? 'جاري التعميق...' : 'تعميق الأرشيف'}</span>
+              <span>
+                {isBackfilling
+                  ? 'جاري التعميق...'
+                  : hasMore
+                  ? 'تعميق دفعة إضافية'
+                  : 'تعميق الأرشيف'}
+              </span>
             </button>
 
             {/* Refresh Button */}
@@ -225,6 +273,28 @@ export const ChannelArchiveManager: React.FC<ChannelArchiveManagerProps> = ({
             </button>
           </div>
         </div>
+
+        {/* HasMore Notice Banner */}
+        {hasMore && (
+          <div
+            id="channel-archive-hasmore-banner"
+            className="px-4 py-2.5 bg-amber-50 dark:bg-amber-950/40 border-b border-amber-200 dark:border-amber-900/50 flex flex-wrap items-center justify-between gap-3 text-xs text-amber-800 dark:text-amber-200 animate-in fade-in"
+          >
+            <div className="flex items-center gap-2">
+              <Zap className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 fill-current" />
+              <span className="font-medium">تم جلب دفعة — اضغط تعميق مرة أخرى للمزيد.</span>
+            </div>
+            <button
+              id="channel-archive-deepen-more-btn"
+              type="button"
+              onClick={handleDeepBackfill}
+              disabled={isBackfilling}
+              className="px-3 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs transition shadow-xs cursor-pointer disabled:opacity-50"
+            >
+              {isBackfilling ? 'جاري الجلب...' : 'تعميق دفعة إضافية'}
+            </button>
+          </div>
+        )}
 
         {/* Toolbar & Search */}
         <div className="p-3 sm:p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50/30 dark:bg-slate-900/30 flex flex-wrap items-center justify-between gap-3">
