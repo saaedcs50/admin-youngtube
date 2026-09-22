@@ -3,6 +3,8 @@
  * Supports parsing playlists, channel IDs, channel handles (@handle), custom URLs, and video URLs.
  */
 
+import { resolveChannelFromWorkerApi } from '../services/api';
+
 export interface ParsedYouTubeInfo {
   sourceType: 'channel' | 'playlist';
   sourceId: string;
@@ -105,13 +107,66 @@ export async function resolveYouTubeMetadata(input: string): Promise<{
   sourceId: string;
   title: string;
 }> {
-  const parsed = parseYouTubeInput(input);
   const cleanInput = input.trim();
+  if (!cleanInput) {
+    return { sourceType: 'channel', sourceId: '', title: '' };
+  }
 
-  // If already a clean Channel ID
-  if (parsed && !parsed.isHandleOrCustom && parsed.sourceType === 'channel') {
-    // Try fetching title via oEmbed if possible, otherwise return ID
-    const title = await fetchChannelTitle(parsed.sourceId) || parsed.sourceId;
+  const parsed = parseYouTubeInput(cleanInput);
+
+  // Extract handle or clean query
+  let handleStr = '';
+  if (parsed && parsed.isHandleOrCustom) {
+    handleStr = parsed.sourceId;
+  } else if (cleanInput.includes('@')) {
+    const m = cleanInput.match(/@([a-zA-Z0-9_.-]+)/);
+    handleStr = m ? `@${m[1]}` : cleanInput;
+  } else if (parsed && parsed.sourceType === 'channel' && !parsed.sourceId.startsWith('UC')) {
+    handleStr = parsed.sourceId.startsWith('@') ? parsed.sourceId : `@${parsed.sourceId}`;
+  }
+
+  // 1. Primary: If it's a handle (@handle or youtube.com/@handle) or text handle, call GET /api/resolve-channel?handle=...
+  if (handleStr || (parsed && parsed.isHandleOrCustom)) {
+    const query = handleStr || cleanInput;
+    const workerRes = await resolveChannelFromWorkerApi(query);
+    if (workerRes) {
+      const resUcId = String(
+        workerRes.sourceId ||
+          workerRes.channelId ||
+          workerRes.id ||
+          workerRes.channel?.id ||
+          workerRes.channel?.sourceId ||
+          ''
+      ).trim();
+      const resTitle = String(
+        workerRes.title ||
+          workerRes.name ||
+          workerRes.channelTitle ||
+          workerRes.channel?.title ||
+          workerRes.channel?.name ||
+          ''
+      ).trim();
+
+      if (resUcId && /^UC[a-zA-Z0-9_-]{20,}$/i.test(resUcId)) {
+        return {
+          sourceType: 'channel',
+          sourceId: resUcId,
+          title: resTitle || resUcId,
+        };
+      }
+    }
+  }
+
+  // 2. If already a clean Channel ID (UC...)
+  if (parsed && !parsed.isHandleOrCustom && parsed.sourceType === 'channel' && /^UC[a-zA-Z0-9_-]{20,}$/i.test(parsed.sourceId)) {
+    let title = '';
+    const workerRes = await resolveChannelFromWorkerApi(parsed.sourceId);
+    if (workerRes) {
+      title = String(workerRes.title || workerRes.name || workerRes.channelTitle || '').trim();
+    }
+    if (!title) {
+      title = (await fetchChannelTitle(parsed.sourceId)) || parsed.sourceId;
+    }
     return {
       sourceType: 'channel',
       sourceId: parsed.sourceId,
@@ -119,9 +174,16 @@ export async function resolveYouTubeMetadata(input: string): Promise<{
     };
   }
 
-  // If already a clean Playlist ID
+  // 3. If already a clean Playlist ID (PL...)
   if (parsed && !parsed.isHandleOrCustom && parsed.sourceType === 'playlist') {
-    const title = await fetchPlaylistTitle(parsed.sourceId) || `قائمة ${parsed.sourceId}`;
+    let title = '';
+    const workerRes = await resolveChannelFromWorkerApi(parsed.sourceId);
+    if (workerRes) {
+      title = String(workerRes.title || workerRes.name || workerRes.channelTitle || '').trim();
+    }
+    if (!title) {
+      title = (await fetchPlaylistTitle(parsed.sourceId)) || `قائمة ${parsed.sourceId}`;
+    }
     return {
       sourceType: 'playlist',
       sourceId: parsed.sourceId,
@@ -129,7 +191,7 @@ export async function resolveYouTubeMetadata(input: string): Promise<{
     };
   }
 
-  // If it's a handle (@handle or youtube.com/@handle) or custom URL or video link
+  // Fallback A: Try noembed / oembed
   let normalizedUrl = cleanInput;
   if (!cleanInput.startsWith('http')) {
     if (cleanInput.startsWith('@')) {
@@ -139,7 +201,6 @@ export async function resolveYouTubeMetadata(input: string): Promise<{
     }
   }
 
-  // Step A: Try noembed / oembed
   try {
     const oembedUrl = `https://noembed.com/embed?url=${encodeURIComponent(normalizedUrl)}`;
     const res = await fetch(oembedUrl, { headers: { Accept: 'application/json' } });
@@ -149,7 +210,6 @@ export async function resolveYouTubeMetadata(input: string): Promise<{
         const title = data.title || data.author_name || '';
         const authorUrl = data.author_url || '';
 
-        // If author_url contains /channel/UC...
         const ucMatch = authorUrl.match(/\/channel\/(UC[a-zA-Z0-9_-]+)/i);
         if (ucMatch && ucMatch[1]) {
           return {
@@ -164,13 +224,12 @@ export async function resolveYouTubeMetadata(input: string): Promise<{
     console.warn('oEmbed lookup failed, trying next resolver...', e);
   }
 
-  // Step B: Fetch page HTML via CORS proxy to extract canonical channel ID (UC...)
+  // Fallback B: Fetch page HTML via CORS proxy to extract canonical channel ID (UC...)
   try {
     const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(normalizedUrl)}`;
     const pageRes = await fetch(proxyUrl);
     if (pageRes.ok) {
       const html = await pageRes.text();
-      // Extract Channel ID
       const channelIdMatch =
         html.match(/itemprop="channelId"\s+content="(UC[a-zA-Z0-9_-]+)"/i) ||
         html.match(/itemprop="identifier"\s+content="(UC[a-zA-Z0-9_-]+)"/i) ||
@@ -178,7 +237,6 @@ export async function resolveYouTubeMetadata(input: string): Promise<{
         html.match(/"externalId":"(UC[a-zA-Z0-9_-]+)"/i) ||
         html.match(/"channelId":"(UC[a-zA-Z0-9_-]+)"/i);
 
-      // Extract Title
       const titleMatch =
         html.match(/<meta property="og:title" content="([^"]+)"/i) ||
         html.match(/<title>([^<]+)<\/title>/i);
@@ -209,7 +267,7 @@ export async function resolveYouTubeMetadata(input: string): Promise<{
     };
   }
 
-  // Final fallback: return input as is
+  // Final fallback
   return {
     sourceType: cleanInput.startsWith('PL') ? 'playlist' : 'channel',
     sourceId: cleanInput,

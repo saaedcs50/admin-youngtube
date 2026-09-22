@@ -253,6 +253,57 @@ export async function triggerScanCleanupBatch(reset: boolean = false): Promise<{
   });
 }
 
+export async function resolveChannelFromWorkerApi(handleOrQuery: string): Promise<{
+  sourceId?: string;
+  channelId?: string;
+  id?: string;
+  title?: string;
+  name?: string;
+  channelTitle?: string;
+  sourceType?: 'channel' | 'playlist';
+  [key: string]: any;
+} | null> {
+  try {
+    const baseUrl = getWorkerUrl();
+    const cleanQuery = handleOrQuery.trim();
+    if (!cleanQuery) return null;
+
+    // Public GET request without forcing admin key header
+    const url = `${baseUrl}/api/resolve-channel?handle=${encodeURIComponent(cleanQuery)}`;
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && typeof data === 'object') {
+        return data;
+      }
+    }
+
+    // Try alternate format (without @ if cleanQuery starts with @, or with @ if without @)
+    if (cleanQuery.startsWith('@')) {
+      const altUrl = `${baseUrl}/api/resolve-channel?handle=${encodeURIComponent(cleanQuery.slice(1))}`;
+      const altRes = await fetch(altUrl, { headers: { Accept: 'application/json' } });
+      if (altRes.ok) {
+        const altData = await altRes.json();
+        if (altData && typeof altData === 'object') {
+          return altData;
+        }
+      }
+    } else if (!cleanQuery.startsWith('UC') && !cleanQuery.startsWith('PL')) {
+      const altUrl = `${baseUrl}/api/resolve-channel?handle=${encodeURIComponent('@' + cleanQuery)}`;
+      const altRes = await fetch(altUrl, { headers: { Accept: 'application/json' } });
+      if (altRes.ok) {
+        const altData = await altRes.json();
+        if (altData && typeof altData === 'object') {
+          return altData;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Worker resolve-channel fetch error:', err);
+  }
+  return null;
+}
+
 export async function fetchStatus(): Promise<StatusResponse> {
   return apiRequest<StatusResponse>('/api/admin/status');
 }

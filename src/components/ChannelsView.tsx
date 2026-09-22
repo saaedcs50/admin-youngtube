@@ -144,9 +144,25 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
     setIsResolvingUrl(true);
     try {
       const resolved = await resolveYouTubeMetadata(raw);
+
+      // Block if channel and sourceId starts with '@' or does not look like UC...
+      if (
+        resolved.sourceType === 'channel' &&
+        (!resolved.sourceId ||
+          resolved.sourceId.startsWith('@') ||
+          !/^UC[a-zA-Z0-9_-]{20,}$/i.test(resolved.sourceId))
+      ) {
+        onNotify(
+          'error',
+          'تعذّر الحصول على معرّف القناة (UC)',
+          'تعذّر الحصول على معرّف القناة (UC). جرّب رابطًا آخر أو تأكد من اسم القناة.'
+        );
+        return;
+      }
+
       setSourceType(resolved.sourceType);
       setSourceId(resolved.sourceId);
-      if (resolved.title && (!title || title.trim() === '')) {
+      if (resolved.title) {
         setTitle(resolved.title);
       }
       setAutoFilled(true);
@@ -157,7 +173,11 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
       );
     } catch (err: any) {
       console.error('Error resolving YouTube URL:', err);
-      onNotify('error', 'تعذر استخراج البيانات تلقائياً', 'يمكنك إدخال المعرف والعنوان يدوياً');
+      onNotify(
+        'error',
+        'تعذر استخراج البيانات تلقائياً',
+        'تعذّر الحصول على معرّف القناة (UC). جرّب رابطًا آخر أو تأكد من اسم القناة.'
+      );
     } finally {
       setIsResolvingUrl(false);
     }
@@ -209,8 +229,49 @@ export const ChannelsView: React.FC<ChannelsViewProps> = ({ onNotify }) => {
 
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanSourceId = sourceId.trim();
-    const cleanTitle = title.trim();
+    let cleanSourceId = sourceId.trim();
+    let cleanTitle = title.trim();
+    const rawInput = urlInput.trim();
+
+    // If sourceType === 'channel' and sourceId starts with '@' or does not look like UC...
+    if (
+      sourceType === 'channel' &&
+      (cleanSourceId.startsWith('@') || !/^UC[a-zA-Z0-9_-]{20,}$/i.test(cleanSourceId))
+    ) {
+      const targetInput = rawInput || cleanSourceId;
+      if (targetInput) {
+        setIsSubmittingAdd(true);
+        try {
+          const resolved = await resolveYouTubeMetadata(targetInput);
+          if (
+            resolved.sourceType === 'channel' &&
+            resolved.sourceId &&
+            /^UC[a-zA-Z0-9_-]{20,}$/i.test(resolved.sourceId)
+          ) {
+            cleanSourceId = resolved.sourceId;
+            setSourceId(resolved.sourceId);
+            if (!cleanTitle || cleanTitle.startsWith('@') || cleanTitle.endsWith('@')) {
+              cleanTitle = resolved.title || cleanSourceId;
+              setTitle(cleanTitle);
+            }
+          }
+        } catch (err) {
+          console.warn('Pre-save resolution failed:', err);
+        } finally {
+          setIsSubmittingAdd(false);
+        }
+      }
+
+      // Re-check after attempt: block save if still invalid/handle
+      if (cleanSourceId.startsWith('@') || !/^UC[a-zA-Z0-9_-]{20,}$/i.test(cleanSourceId)) {
+        onNotify(
+          'error',
+          'تعذّر الحفظ',
+          'تعذّر الحصول على معرّف القناة (UC). جرّب رابطًا آخر أو تأكد من اسم القناة.'
+        );
+        return;
+      }
+    }
 
     if (!cleanSourceId || !cleanTitle) {
       onNotify('warning', 'بيانات ناقصة', 'الرجاء إدخال معرّف المصدر وعنوان القناة/القائمة');
