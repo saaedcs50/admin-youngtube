@@ -128,6 +128,42 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
         res.channelComplete === true || (res.channelComplete === undefined && batchChannels.length > 0);
       const currentTitle = res.title || batchChannels[0]?.title || '';
 
+      const extra = (res as any).extraFields || {};
+      // 1) Accumulate metrics.videosChecked by ADDING videosCheckedThisCall (or totalVideosChecked from extraFields)
+      // per successful batch — not by replacing with a wrong field and not by double-counting full archive sizes.
+      const videosCheckedThisCall =
+        typeof extra.videosCheckedThisCall === 'number'
+          ? extra.videosCheckedThisCall
+          : typeof (res as any).videosCheckedThisCall === 'number'
+          ? (res as any).videosCheckedThisCall
+          : typeof extra.totalVideosChecked === 'number'
+          ? extra.totalVideosChecked
+          : typeof res.totalVideosChecked === 'number'
+          ? res.totalVideosChecked
+          : 0;
+
+      const removedShortDelta =
+        typeof extra.removedShortDurationThisCall === 'number'
+          ? extra.removedShortDurationThisCall
+          : typeof (res as any).removedShortDurationThisCall === 'number'
+          ? (res as any).removedShortDurationThisCall
+          : typeof extra.totalRemovedShortDuration === 'number'
+          ? extra.totalRemovedShortDuration
+          : typeof res.totalRemovedShortDuration === 'number'
+          ? res.totalRemovedShortDuration
+          : 0;
+
+      const removedPortraitDelta =
+        typeof extra.removedPortraitThisCall === 'number'
+          ? extra.removedPortraitThisCall
+          : typeof (res as any).removedPortraitThisCall === 'number'
+          ? (res as any).removedPortraitThisCall
+          : typeof extra.totalRemovedPortrait === 'number'
+          ? extra.totalRemovedPortrait
+          : typeof res.totalRemovedPortrait === 'number'
+          ? res.totalRemovedPortrait
+          : 0;
+
       return {
         successItems: batchChannels.map((c: any) => ({
           sourceId: String(c.sourceId || c.id || ''),
@@ -143,16 +179,20 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
         currentChannelTitle: res.channelComplete === false ? (currentTitle || 'قناة جاري معالجتها') : null,
         processedDelta: isChannelComplete ? (batchChannels.length > 0 ? batchChannels.length : 1) : 0,
         metricsDelta: {
-          videosChecked: Number(res.totalVideosChecked || 0),
-          removedShortDuration: Number(res.totalRemovedShortDuration || 0),
-          removedPortrait: Number(res.totalRemovedPortrait || 0),
+          videosChecked: videosCheckedThisCall,
+          removedShortDuration: removedShortDelta,
+          removedPortrait: removedPortraitDelta,
         },
         debugExtra: {
           channelComplete: res.channelComplete,
           title: res.title,
+          videosCheckedThisCall,
+          cursorBefore: res.cursorBefore,
+          cursorAfter: res.cursorAfter,
           totalVideosChecked: res.totalVideosChecked,
           totalRemovedShortDuration: res.totalRemovedShortDuration,
           totalRemovedPortrait: res.totalRemovedPortrait,
+          extraFields: extra,
         },
       };
     },
@@ -871,6 +911,17 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
             </button>
 
             <button
+              id="scan-cleanup-reset-btn"
+              onClick={() => scanTool.start({ reset: true })}
+              disabled={scanTool.isRunning}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              title="إعادة الفحص من الصفر (reset)"
+            >
+              <RefreshCw className="w-3 h-3" />
+              <span>إعادة من الصفر</span>
+            </button>
+
+            <button
               id="scan-cleanup-stop-btn"
               onClick={scanTool.stop}
               disabled={!scanTool.isRunning || scanTool.isStopping}
@@ -891,8 +942,8 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
               </span>
               <span className="font-mono font-bold text-amber-600 dark:text-amber-400">
                 {scanTool.totalChannels !== null
-                  ? `تمت معالجة ${scanTool.processedCount} من ${scanTool.totalChannels} قناة`
-                  : `تمت معالجة ${scanTool.processedCount} قناة`}
+                  ? `تم معالجة ${scanTool.processedCount} من ${scanTool.totalChannels} قناة`
+                  : `تم معالجة ${scanTool.processedCount} قناة`}
               </span>
             </div>
             {scanTool.totalChannels !== null && scanTool.totalChannels > 0 && (
@@ -912,11 +963,19 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
             </div>
           </div>
 
-          {/* Status line shown while current channel is mid-progress (channelComplete === false) */}
-          {scanTool.isRunning && scanTool.currentChannelTitle && (
-            <div className="flex items-center gap-2 text-xs font-medium text-amber-700 dark:text-amber-400 bg-amber-50/80 dark:bg-amber-950/50 px-2.5 py-1.5 rounded-lg border border-amber-200/60 dark:border-amber-900/40">
-              <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0 text-amber-500" />
-              <span>جاري معالجة: {scanTool.currentChannelTitle} (متابعة...)</span>
+          {/* Status line shown when channel is mid-progress (channelComplete === false) */}
+          {scanTool.lastBatchDebug?.channelComplete === false && (
+            <div
+              id="scan-cleanup-channel-partial-notice"
+              className="flex items-center gap-2 text-xs font-medium text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 px-3 py-2 rounded-lg border border-amber-200 dark:border-amber-900/50"
+            >
+              <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0 text-amber-600 dark:text-amber-400" />
+              <span>نفس القناة قيد المعالجة (دفعة جزئية) — المؤشر لن يزيد حتى تكتمل القناة.</span>
+              {scanTool.currentChannelTitle && (
+                <span className="text-[11px] text-amber-700/80 dark:text-amber-400/80 font-mono">
+                  ({scanTool.currentChannelTitle})
+                </span>
+              )}
             </div>
           )}
 
@@ -953,7 +1012,7 @@ export const StatusView: React.FC<StatusViewProps> = ({ onNotify }) => {
               </span>
             </div>
             <div className="text-slate-300 text-[11px] leading-relaxed break-all">
-              آخر استجابة: reset المُرسل = <span className={scanTool.lastBatchDebug.sentReset ? 'text-emerald-400 font-bold' : 'text-slate-400'}>{String(scanTool.lastBatchDebug.sentReset)}</span>, cursorBefore = <span className="text-purple-300 font-bold">{scanTool.lastBatchDebug.cursorBefore}</span>, cursorAfter = <span className="text-purple-300 font-bold">{scanTool.lastBatchDebug.cursorAfter}</span>, totalChannels = <span className="text-blue-300 font-bold">{scanTool.lastBatchDebug.totalChannels}</span>, channelComplete = <span className={scanTool.lastBatchDebug.channelComplete === false ? 'text-amber-400 font-bold' : 'text-emerald-400 font-bold'}>{String(scanTool.lastBatchDebug.channelComplete ?? true)}</span>, wrappedAround = <span className={scanTool.lastBatchDebug.wrappedAround ? 'text-amber-400 font-bold' : 'text-slate-400'}>{String(scanTool.lastBatchDebug.wrappedAround)}</span>, totalVideosChecked = <span className="text-cyan-300 font-bold">{scanTool.lastBatchDebug.totalVideosChecked}</span>, totalRemovedShortDuration = <span className="text-rose-400 font-bold">{scanTool.lastBatchDebug.totalRemovedShortDuration}</span>, totalRemovedPortrait = <span className="text-rose-400 font-bold">{scanTool.lastBatchDebug.totalRemovedPortrait}</span>, قنوات فُحصت = <span className="text-emerald-400 font-bold">{scanTool.lastBatchDebug.processedCount}</span>, فشل = <span className={scanTool.lastBatchDebug.failedCount > 0 ? 'text-rose-400 font-bold' : 'text-slate-400'}>{scanTool.lastBatchDebug.failedCount}</span>, الوقت = <span className="text-slate-300">{scanTool.lastBatchDebug.timestamp}</span>
+              آخر استجابة: reset المُرسل = <span className={scanTool.lastBatchDebug.sentReset ? 'text-emerald-400 font-bold' : 'text-slate-400'}>{String(scanTool.lastBatchDebug.sentReset)}</span>, cursorBefore = <span className="text-purple-300 font-bold">{scanTool.lastBatchDebug.cursorBefore}</span>, cursorAfter = <span className="text-purple-300 font-bold">{scanTool.lastBatchDebug.cursorAfter}</span>, totalChannels = <span className="text-blue-300 font-bold">{scanTool.lastBatchDebug.totalChannels}</span>, channelComplete = <span className={scanTool.lastBatchDebug.channelComplete === false ? 'text-amber-400 font-bold' : 'text-emerald-400 font-bold'}>{String(scanTool.lastBatchDebug.channelComplete ?? true)}</span>, wrappedAround = <span className={scanTool.lastBatchDebug.wrappedAround ? 'text-amber-400 font-bold' : 'text-slate-400'}>{String(scanTool.lastBatchDebug.wrappedAround)}</span>, videosCheckedThisCall = <span className="text-cyan-300 font-bold">{scanTool.lastBatchDebug.videosCheckedThisCall}</span>, totalVideosChecked = <span className="text-cyan-300 font-bold">{scanTool.lastBatchDebug.totalVideosChecked}</span>, totalRemovedShortDuration = <span className="text-rose-400 font-bold">{scanTool.lastBatchDebug.totalRemovedShortDuration}</span>, totalRemovedPortrait = <span className="text-rose-400 font-bold">{scanTool.lastBatchDebug.totalRemovedPortrait}</span>, قنوات فُحصت = <span className="text-emerald-400 font-bold">{scanTool.lastBatchDebug.processedCount}</span>, فشل = <span className={scanTool.lastBatchDebug.failedCount > 0 ? 'text-rose-400 font-bold' : 'text-slate-400'}>{scanTool.lastBatchDebug.failedCount}</span>, الوقت = <span className="text-slate-300">{scanTool.lastBatchDebug.timestamp}</span>
             </div>
 
             {Array.isArray(scanTool.lastBatchDebug.failedChannelsDetail) && scanTool.lastBatchDebug.failedChannelsDetail.length > 0 && (

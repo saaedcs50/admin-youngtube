@@ -9,6 +9,7 @@ import {
   Film,
   Loader2,
   RefreshCw,
+  RotateCcw,
   Search,
   Trash2,
   Tv,
@@ -17,6 +18,7 @@ import {
   Zap,
 } from 'lucide-react';
 import {
+  BackfillChannelResponse,
   deleteChannelVideo,
   fetchChannelArchive,
   triggerChannelBackfill,
@@ -90,43 +92,63 @@ export const ChannelArchiveManager: React.FC<ChannelArchiveManagerProps> = ({
   }, [sourceId]);
 
   // Handle deep backfill
-  const handleDeepBackfill = async () => {
+  const handleDeepBackfill = async (reset: boolean = false) => {
     if (isBackfilling) return;
     setIsBackfilling(true);
-    onNotify('info', 'بدء تعميق الأرشيف...', 'جاري جلب الفيديوهات عبر خادم الإنتاج وتحديث الأرشيف...');
+    onNotify(
+      'info',
+      reset ? 'إعادة جلب الأرشيف من البداية...' : 'بدء تعميق الأرشيف...',
+      'جاري جلب الفيديوهات عبر خادم الإنتاج وتحديث الأرشيف...'
+    );
     try {
-      const res = await triggerChannelBackfill(sourceId, false);
-      const addedCount = typeof res?.addedVideosCount === 'number'
+      let res: BackfillChannelResponse;
+      try {
+        res = await triggerChannelBackfill(sourceId, reset);
+        const resErr = String(res?.error || res?.message || '');
+        if (!reset && /invalid\s*page\s*token/i.test(resErr)) {
+          throw new Error(resErr);
+        }
+      } catch (firstErr: any) {
+        const errMsg = String(firstErr?.message || '');
+        // On error containing invalidPageToken / invalid page token: retry once with reset:true
+        if (!reset && /invalid\s*page\s*token/i.test(errMsg)) {
+          console.warn('Invalid page token detected, retrying once with reset:true...', firstErr);
+          res = await triggerChannelBackfill(sourceId, true);
+        } else {
+          throw firstErr;
+        }
+      }
+      const added = typeof res?.addedVideosCount === 'number'
         ? res.addedVideosCount
-        : Number(res?.added ?? res?.count ?? 0);
-      const totalCount = typeof res?.totalVideosInArchive === 'number'
+        : (typeof res?.added === 'number' ? res.added : 0);
+      const total = typeof res?.totalVideosInArchive === 'number'
         ? res.totalVideosInArchive
-        : Number(res?.total ?? 0);
+        : (typeof res?.total === 'number' ? res.total : 0);
+      const fetched = typeof res?.fetchedFromYoutubeCount === 'number'
+        ? res.fetchedFromYoutubeCount
+        : undefined;
       const hasMoreAvailable = Boolean(res?.hasMore);
+
       setHasMore(hasMoreAvailable);
 
-      if (addedCount === 0 && totalCount === 0) {
+      if (added > 0) {
+        let desc = `أُضيف جديد: ${added}. إجمالي الأرشيف: ${total}.`;
+        if (typeof fetched === 'number' && fetched !== added) {
+          desc += ` (جُلب من يوتيوب: ${fetched}).`;
+        }
+        onNotify('success', 'تم تعميق الأرشيف بنجاح', desc);
+      } else if (hasMoreAvailable) {
         onNotify(
-          'error',
-          'تعذّر الجلب',
-          'تعذّر الجلب — تحقق من مفتاح YouTube على السيرفر أو أعد المحاولة.'
+          'info',
+          'دفعة الأرشيف',
+          'لا فيديوهات جديدة في هذه الدفعة؛ يوجد المزيد — اضغط تعميق مرة أخرى.'
         );
       } else {
-        if (hasMoreAvailable) {
-          onNotify(
-            'success',
-            'تم جلب دفعة من الأرشيف',
-            `تمت إضافة ${addedCount} فيديو (إجمالي الأرشيف: ${totalCount}). تم جلب دفعة — اضغط تعميق مرة أخرى للمزيد.`
-          );
-        } else {
-          onNotify(
-            'success',
-            'اكتمل تعميق الأرشيف بنجاح',
-            addedCount > 0
-              ? `تمت إضافة ${addedCount} فيديو بنجاح للأرشيف (إجمالي الأرشيف: ${totalCount} فيديو).`
-              : `تم فحص الأرشيف، وهو محدّث بالكامل (إجمالي الأرشيف: ${totalCount} فيديو).`
-          );
-        }
+        onNotify(
+          'success',
+          'اكتمال الأرشيف',
+          'الأرشيف مكتمل لهذا المصدر (لا صفحات تالية).'
+        );
       }
 
       // Reload archive list via GET /api/channel-archive?id=
@@ -225,12 +247,12 @@ export const ChannelArchiveManager: React.FC<ChannelArchiveManagerProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+          <div className="flex items-center gap-2 self-end sm:self-auto shrink-0 flex-wrap">
             {/* Deep Backfill Button */}
             <button
               id="channel-archive-backfill-btn"
               type="button"
-              onClick={handleDeepBackfill}
+              onClick={() => handleDeepBackfill(false)}
               disabled={isBackfilling || isLoading}
               className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition shadow-sm shadow-amber-600/20 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               title="تعميق الأرشيف واستيراد الفيديوهات القديمة من يوتيوب"
@@ -247,6 +269,19 @@ export const ChannelArchiveManager: React.FC<ChannelArchiveManagerProps> = ({
                   ? 'تعميق دفعة إضافية'
                   : 'تعميق الأرشيف'}
               </span>
+            </button>
+
+            {/* Reset / From scratch button */}
+            <button
+              id="channel-archive-reset-btn"
+              type="button"
+              onClick={() => handleDeepBackfill(true)}
+              disabled={isBackfilling || isLoading}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-medium transition cursor-pointer disabled:opacity-50"
+              title="إعادة جلب الأرشيف من البداية وتحديث مؤشر الصفحات"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>إعادة من الصفر</span>
             </button>
 
             {/* Refresh Button */}
@@ -287,7 +322,7 @@ export const ChannelArchiveManager: React.FC<ChannelArchiveManagerProps> = ({
             <button
               id="channel-archive-deepen-more-btn"
               type="button"
-              onClick={handleDeepBackfill}
+              onClick={() => handleDeepBackfill(false)}
               disabled={isBackfilling}
               className="px-3 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs transition shadow-xs cursor-pointer disabled:opacity-50"
             >

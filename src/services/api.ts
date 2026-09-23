@@ -221,6 +221,18 @@ export async function triggerScanCleanupBatch(reset: boolean = false): Promise<{
   totalVideosChecked: number;
   totalRemovedShortDuration: number;
   totalRemovedPortrait: number;
+  videosCheckedThisCall?: number;
+  removedShortDurationThisCall?: number;
+  removedPortraitThisCall?: number;
+  extraFields?: {
+    videosCheckedThisCall?: number;
+    totalVideosChecked?: number;
+    removedShortDurationThisCall?: number;
+    totalRemovedShortDuration?: number;
+    removedPortraitThisCall?: number;
+    totalRemovedPortrait?: number;
+    [key: string]: any;
+  };
   cursorBefore: number;
   cursorAfter: number;
   totalChannels: number;
@@ -240,6 +252,18 @@ export async function triggerScanCleanupBatch(reset: boolean = false): Promise<{
     totalVideosChecked: number;
     totalRemovedShortDuration: number;
     totalRemovedPortrait: number;
+    videosCheckedThisCall?: number;
+    removedShortDurationThisCall?: number;
+    removedPortraitThisCall?: number;
+    extraFields?: {
+      videosCheckedThisCall?: number;
+      totalVideosChecked?: number;
+      removedShortDurationThisCall?: number;
+      totalRemovedShortDuration?: number;
+      removedPortraitThisCall?: number;
+      totalRemovedPortrait?: number;
+      [key: string]: any;
+    };
     cursorBefore: number;
     cursorAfter: number;
     totalChannels: number;
@@ -622,8 +646,10 @@ export async function deleteChannelVideo(sourceId: string, videoId: string): Pro
 export interface BackfillChannelResponse {
   sourceId?: string;
   addedVideosCount?: number;
+  fetchedFromYoutubeCount?: number;
   totalVideosInArchive?: number;
   hasMore?: boolean;
+  pageTokenCleared?: boolean;
   ok?: boolean;
   success?: boolean;
   message?: string;

@@ -79,6 +79,10 @@ export function useBatchTool<TResult = any>(options: UseBatchToolOptions<TResult
   const [recentFailures, setRecentFailures] = useState<BatchFailedItem[]>([]);
 
   const stopRef = useRef(false);
+  const processedCountRef = useRef(0);
+  const skippedBatchesRef = useRef(0);
+  const metricsRef = useRef<Record<string, number>>({});
+  const wrappedAroundRef = useRef(false);
 
   // Helper for interruptible delay between batch ticks
   const waitWithCancellation = async (ms: number) => {
@@ -101,23 +105,33 @@ export function useBatchTool<TResult = any>(options: UseBatchToolOptions<TResult
     setIsRunning(true);
     setIsStopping(false);
     stopRef.current = false;
-    setProcessedCount(0);
-    setSkippedBatchesCount(0);
-    setCurrentChannelTitle(null);
-    setMetrics({});
-    setRecentSuccesses([]);
-    setRecentFailures([]);
+
+    const isReset = opts?.reset === true || wrappedAroundRef.current;
+    if (isReset) {
+      wrappedAroundRef.current = false;
+      processedCountRef.current = 0;
+      skippedBatchesRef.current = 0;
+      metricsRef.current = {};
+      setProcessedCount(0);
+      setSkippedBatchesCount(0);
+      setCurrentChannelTitle(null);
+      setMetrics({});
+      setRecentSuccesses([]);
+      setRecentFailures([]);
+    }
     setActiveTab('success');
 
     if (options.messages?.startTitle) {
       options.onNotify('info', options.messages.startTitle, options.messages.startDesc);
     }
 
-    let accumulatedProcessed = 0;
-    let accumulatedSkippedBatches = 0;
+    let accumulatedProcessed = isReset ? 0 : processedCountRef.current;
+    let accumulatedSkippedBatches = isReset ? 0 : skippedBatchesRef.current;
     let consecutiveFailedBatches = 0;
     let isFirstCall = true;
-    const accumulatedMetrics: Record<string, number> = {};
+    const accumulatedMetrics: Record<string, number> = isReset
+      ? {}
+      : { ...metricsRef.current };
 
     try {
       while (!stopRef.current) {
@@ -155,11 +169,19 @@ export function useBatchTool<TResult = any>(options: UseBatchToolOptions<TResult
           break;
         }
 
-        // If all 3 attempts failed for this batch
+        // If all 3 attempts failed for this batch (skipped batch)
         if (!res) {
           accumulatedSkippedBatches++;
+          skippedBatchesRef.current = accumulatedSkippedBatches;
           setSkippedBatchesCount(accumulatedSkippedBatches);
           consecutiveFailedBatches++;
+
+          // Emit network warning on skipped batch without resetting cumulative counters
+          options.onNotify(
+            'warning',
+            'تحذير شبكة: تم تخطي دفعة',
+            `تعذرت معالجة الدفعة بعد 3 محاولات. سيتم المتابعة تلقائيًا مع الحفاظ على العدادات الحالية (${accumulatedProcessed} قناة).`
+          );
 
           if (consecutiveFailedBatches >= 3) {
             options.onNotify(
@@ -209,6 +231,7 @@ export function useBatchTool<TResult = any>(options: UseBatchToolOptions<TResult
           for (const [k, v] of Object.entries(info.metricsDelta)) {
             accumulatedMetrics[k] = (accumulatedMetrics[k] || 0) + (Number(v) || 0);
           }
+          metricsRef.current = { ...accumulatedMetrics };
           setMetrics({ ...accumulatedMetrics });
         }
 
@@ -229,6 +252,7 @@ export function useBatchTool<TResult = any>(options: UseBatchToolOptions<TResult
               ? info.successItems.length
               : 1;
           accumulatedProcessed += delta;
+          processedCountRef.current = accumulatedProcessed;
           setProcessedCount(accumulatedProcessed);
         }
 
@@ -257,6 +281,7 @@ export function useBatchTool<TResult = any>(options: UseBatchToolOptions<TResult
 
         // Check if full pass wrapped around
         if (info.wrappedAround) {
+          wrappedAroundRef.current = true;
           const desc = options.messages?.getCompleteDesc
             ? options.messages.getCompleteDesc({
                 totalChannels: info.totalChannels || accumulatedProcessed,
