@@ -797,6 +797,9 @@ export async function reorderCategories(categories: CategoryItem[]): Promise<unk
     method: 'POST',
     body: JSON.stringify({ action: 'reorder', categories: ordered, categoryIds: ordered.map((c) => c.id) }),
   });
-  try { localStorage.setItem(STORAGE_KEY_CATEGORIES, JSON.stringify(ordered)); } catch { /* best-effort cache */ }
+  try {
+    const current = await fetchCategories();
+    localStorage.setItem(STORAGE_KEY_CATEGORIES, JSON.stringify(current));
+  } catch { /* best-effort cache */ }
   return workerResult;
 }
