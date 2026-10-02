@@ -764,93 +764,39 @@ export async function fetchCategories(): Promise<CategoryItem[]> {
 }
 
 export async function saveCategory(category: CategoryItem): Promise<unknown> {
-  // 1. Try sending to Worker
-  let workerResult: unknown = null;
-  try {
-    workerResult = await apiRequest('/api/admin/categories', {
-      method: 'POST',
-      body: JSON.stringify({
-        action: 'save',
-        category,
-        item: category,
-      }),
-    });
-  } catch (err) {
-    console.warn('Worker save category failed, persisting locally in cache:', err);
-  }
-
-  // 2. Also update local cache
+  // Worker is authoritative. Cache is updated only after a confirmed server success.
+  const workerResult = await apiRequest('/api/admin/categories', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'save', category, item: category }),
+  });
   try {
     const current = await fetchCategories();
     const existingIndex = current.findIndex((c) => c.id === category.id);
-    let updated: CategoryItem[];
-    if (existingIndex >= 0) {
-      updated = [...current];
-      updated[existingIndex] = { ...updated[existingIndex], ...category };
-    } else {
-      updated = [...current, { ...category, order: category.order || current.length + 1 }];
-    }
+    const updated = existingIndex >= 0 ? current.map((c, i) => i === existingIndex ? { ...c, ...category } : c) : [...current, { ...category, order: category.order || current.length + 1 }];
     localStorage.setItem(STORAGE_KEY_CATEGORIES, JSON.stringify(updated));
-  } catch {
-    /* ignore */
-  }
-
-  return workerResult || { ok: true, savedLocally: true };
+  } catch { /* best-effort cache */ }
+  return workerResult;
 }
 
 export async function deleteCategory(categoryId: string): Promise<unknown> {
-  // 1. Try sending delete to Worker
-  let workerResult: unknown = null;
-  try {
-    workerResult = await apiRequest('/api/admin/categories', {
-      method: 'POST',
-      body: JSON.stringify({
-        action: 'delete',
-        id: categoryId,
-        categoryId,
-      }),
-    });
-  } catch (err) {
-    console.warn('Worker delete category failed, deleting from local cache:', err);
-  }
-
-  // 2. Remove from local cache
+  // Worker is authoritative. Cache is updated only after a confirmed server success.
+  const workerResult = await apiRequest('/api/admin/categories', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'delete', id: categoryId, categoryId }),
+  });
   try {
     const current = await fetchCategories();
-    const updated = current.filter((c) => c.id !== categoryId);
-    localStorage.setItem(STORAGE_KEY_CATEGORIES, JSON.stringify(updated));
-  } catch {
-    /* ignore */
-  }
-
-  return workerResult || { ok: true, deletedLocally: true };
+    localStorage.setItem(STORAGE_KEY_CATEGORIES, JSON.stringify(current.filter((c) => c.id !== categoryId)));
+  } catch { /* best-effort cache */ }
+  return workerResult;
 }
 
 export async function reorderCategories(categories: CategoryItem[]): Promise<unknown> {
   const ordered = categories.map((c, idx) => ({ ...c, order: idx + 1 }));
-
-  // 1. Send to Worker
-  let workerResult: unknown = null;
-  try {
-    workerResult = await apiRequest('/api/admin/categories', {
-      method: 'POST',
-      body: JSON.stringify({
-        action: 'reorder',
-        categories: ordered,
-        categoryIds: ordered.map((c) => c.id),
-      }),
-    });
-  } catch (err) {
-    console.warn('Worker reorder failed, updating local cache:', err);
-  }
-
-  // 2. Update local cache
-  try {
-    localStorage.setItem(STORAGE_KEY_CATEGORIES, JSON.stringify(ordered));
-  } catch {
-    /* ignore */
-  }
-
-  return workerResult || { ok: true };
+  const workerResult = await apiRequest('/api/admin/categories', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'reorder', categories: ordered, categoryIds: ordered.map((c) => c.id) }),
+  });
+  try { localStorage.setItem(STORAGE_KEY_CATEGORIES, JSON.stringify(ordered)); } catch { /* best-effort cache */ }
+  return workerResult;
 }
-
