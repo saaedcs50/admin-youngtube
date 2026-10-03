@@ -2,7 +2,15 @@
  * Type definitions for admin-youngtube
  */
 
-export type TabType = 'telemetry' | 'blocks' | 'channels' | 'categories' | 'announcements' | 'status' | 'settings';
+export type TabType =
+  | 'telemetry'
+  | 'blocks'
+  | 'channels'
+  | 'categories'
+  | 'announcements'
+  | 'support-pay'
+  | 'status'
+  | 'settings';
 
 export type TimeRangeDays = 7 | 30 | 90;
 
@@ -130,6 +138,22 @@ export interface StatusResponse {
   server_time?: string;
   uptime?: number | string;
   environment?: string;
+  [key: string]: any;
+}
+
+export interface SupportPayData {
+  instapay?: {
+    phone?: string;
+    ipa?: string;
+    url?: string;
+    name?: string;
+  };
+  vodafoneCash?: {
+    phone?: string;
+    name?: string;
+  };
+  note?: string;
+  updatedAt?: string | number;
   [key: string]: any;
 }
 

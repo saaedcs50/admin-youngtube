@@ -12,6 +12,7 @@ import { BlocksView } from './components/BlocksView';
 import { ChannelsView } from './components/ChannelsView';
 import { CategoriesView } from './components/CategoriesView';
 import { AnnouncementsView } from './components/AnnouncementsView';
+import { SupportPayView } from './components/SupportPayView';
 import { StatusView } from './components/StatusView';
 import { SettingsView } from './components/SettingsView';
 import { ToastContainer } from './components/Toast';
@@ -192,6 +193,10 @@ export default function App() {
 
           {activeTab === 'announcements' && (
             <AnnouncementsView key={refreshTrigger} onNotify={addToast} />
+          )}
+
+          {activeTab === 'support-pay' && (
+            <SupportPayView key={refreshTrigger} onNotify={addToast} />
           )}
 
           {activeTab === 'status' && (

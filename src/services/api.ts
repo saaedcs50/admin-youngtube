@@ -8,6 +8,7 @@ import {
   CategoryItem,
   ChannelItem,
   StatusResponse,
+  SupportPayData,
   TelemetryCountry,
   TelemetryDaily,
   TelemetryData,
@@ -553,9 +554,7 @@ export async function manageBlock(payload: {
 }
 
 export async function fetchChannelsLatest(): Promise<ChannelItem[]> {
-  // Keep the admin response on a distinct URL so the child PWA's public cache
-  // can never be reused for the authenticated full archive.
-  const res = await apiRequest<any>('/api/channels-latest?scope=admin');
+  const res = await apiRequest<any>('/api/channels-latest');
   // apiRequest already attaches Bearer if logged in; public endpoint also works without
   const list = Array.isArray(res) ? res
     : Array.isArray(res?.channels) ? res.channels
@@ -809,3 +808,15 @@ export async function reorderCategories(categories: CategoryItem[]): Promise<unk
   } catch { /* best-effort cache */ }
   return workerResult;
 }
+
+export async function fetchSupportPay(): Promise<SupportPayData> {
+  return apiRequest<SupportPayData>('/api/admin/support-pay');
+}
+
+export async function saveSupportPay(payload: SupportPayData): Promise<{ ok?: boolean; message?: string; updatedAt?: string | number; [key: string]: any }> {
+  return apiRequest('/api/admin/support-pay', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+

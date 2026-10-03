@@ -43,6 +43,10 @@ const TAB_TITLES: Record<TabType, { title: string; subtitle: string }> = {
     title: 'التنبيهات والإعلانات',
     subtitle: 'نشر رسائل وتنبيهات فورية للمستخدمين وأولياء الأمور',
   },
+  'support-pay': {
+    title: 'بيانات الدعم والتبرع',
+    subtitle: 'إدارة وتحديث بيانات الدفع عبر InstaPay وفودافون كاش المعروضة للمستخدمين',
+  },
   status: {
     title: 'حالة الخادم والبنية التحتية',
     subtitle: 'فحص صحة الـ Worker وسرعة الاستجابة وذاكرة التخزين المؤقت',

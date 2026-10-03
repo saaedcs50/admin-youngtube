@@ -8,6 +8,7 @@ import {
   ShieldAlert,
   Tags,
   Tv,
+  Wallet,
 } from 'lucide-react';
 import { TabType } from '../types';
 
@@ -30,6 +31,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'channels', label: 'القنوات والمصادر', icon: Tv },
   { id: 'categories', label: 'إدارة التصنيفات', icon: Tags, badge: 'جديد' },
   { id: 'announcements', label: 'الإعلانات والتنبيهات', icon: Megaphone },
+  { id: 'support-pay', label: 'بيانات الدعم', icon: Wallet },
   { id: 'status', label: 'حالة الخادم (Status)', icon: Activity },
   { id: 'settings', label: 'الإعدادات والربط', icon: Settings },
 ];
