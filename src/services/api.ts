@@ -292,9 +292,13 @@ export async function resolveChannelFromWorkerApi(handleOrQuery: string): Promis
     const cleanQuery = handleOrQuery.trim();
     if (!cleanQuery) return null;
 
-    // Public GET request without forcing admin key header
+    // This endpoint may use the server's YouTube quota only for an authenticated admin request.
+    const adminKey = getAdminKey();
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (adminKey) headers.Authorization = `Bearer ${adminKey}`;
+
     const url = `${baseUrl}/api/resolve-channel?handle=${encodeURIComponent(cleanQuery)}`;
-    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    const res = await fetch(url, { headers });
     if (res.ok) {
       const data = await res.json();
       if (data && typeof data === 'object') {
@@ -305,7 +309,7 @@ export async function resolveChannelFromWorkerApi(handleOrQuery: string): Promis
     // Try alternate format (without @ if cleanQuery starts with @, or with @ if without @)
     if (cleanQuery.startsWith('@')) {
       const altUrl = `${baseUrl}/api/resolve-channel?handle=${encodeURIComponent(cleanQuery.slice(1))}`;
-      const altRes = await fetch(altUrl, { headers: { Accept: 'application/json' } });
+      const altRes = await fetch(altUrl, { headers });
       if (altRes.ok) {
         const altData = await altRes.json();
         if (altData && typeof altData === 'object') {
@@ -314,7 +318,7 @@ export async function resolveChannelFromWorkerApi(handleOrQuery: string): Promis
       }
     } else if (!cleanQuery.startsWith('UC') && !cleanQuery.startsWith('PL')) {
       const altUrl = `${baseUrl}/api/resolve-channel?handle=${encodeURIComponent('@' + cleanQuery)}`;
-      const altRes = await fetch(altUrl, { headers: { Accept: 'application/json' } });
+      const altRes = await fetch(altUrl, { headers });
       if (altRes.ok) {
         const altData = await altRes.json();
         if (altData && typeof altData === 'object') {
@@ -549,7 +553,9 @@ export async function manageBlock(payload: {
 }
 
 export async function fetchChannelsLatest(): Promise<ChannelItem[]> {
-  const res = await apiRequest<any>('/api/channels-latest');
+  // Keep the admin response on a distinct URL so the child PWA's public cache
+  // can never be reused for the authenticated full archive.
+  const res = await apiRequest<any>('/api/channels-latest?scope=admin');
   // apiRequest already attaches Bearer if logged in; public endpoint also works without
   const list = Array.isArray(res) ? res
     : Array.isArray(res?.channels) ? res.channels
