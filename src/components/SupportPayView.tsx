@@ -24,6 +24,7 @@ export const SupportPayView: React.FC<SupportPayViewProps> = ({ onNotify }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
 
   // InstaPay fields
   const [instaPhone, setInstaPhone] = useState('');
@@ -43,23 +44,35 @@ export const SupportPayView: React.FC<SupportPayViewProps> = ({ onNotify }) => {
 
   const loadData = async () => {
     setIsLoading(true);
+    setValidationError(null);
     try {
-      const res = await fetchSupportPay();
-      const root =
-        res && typeof res === 'object' && 'data' in res && res.data ? (res.data as Record<string, any>) : (res as Record<string, any>);
+      const res = (await fetchSupportPay()) as any;
+      const root = res?.payload ?? res?.data ?? res;
 
       const instapay = root?.instapay || root?.insta_pay || {};
       const vodafone = root?.vodafoneCash || root?.vodafone_cash || root?.vodafone || {};
 
-      setInstaPhone(String(instapay.phone || root?.instapayPhone || root?.instapay_phone || ''));
-      setInstaIpa(String(instapay.ipa || root?.instapayIpa || root?.instapay_ipa || ''));
-      setInstaUrl(String(instapay.url || root?.instapayUrl || root?.instapay_url || ''));
-      setInstaName(String(instapay.name || root?.instapayName || root?.instapay_name || ''));
+      setInstaPhone(
+        instapay.phone ? String(instapay.phone) : root?.instapayPhone || root?.instapay_phone ? String(root.instapayPhone || root.instapay_phone) : ''
+      );
+      setInstaIpa(
+        instapay.ipa ? String(instapay.ipa) : root?.instapayIpa || root?.instapay_ipa ? String(root.instapayIpa || root.instapay_ipa) : ''
+      );
+      setInstaUrl(
+        instapay.url ? String(instapay.url) : root?.instapayUrl || root?.instapay_url ? String(root.instapayUrl || root.instapay_url) : ''
+      );
+      setInstaName(
+        instapay.name ? String(instapay.name) : root?.instapayName || root?.instapay_name ? String(root.instapayName || root.instapay_name) : ''
+      );
 
-      setVodaPhone(String(vodafone.phone || root?.vodafonePhone || root?.vodafone_phone || ''));
-      setVodaName(String(vodafone.name || root?.vodafoneName || root?.vodafone_name || ''));
+      setVodaPhone(
+        vodafone.phone ? String(vodafone.phone) : root?.vodafonePhone || root?.vodafone_phone ? String(root.vodafonePhone || root.vodafone_phone) : ''
+      );
+      setVodaName(
+        vodafone.name ? String(vodafone.name) : root?.vodafoneName || root?.vodafone_name ? String(root.vodafoneName || root.vodafone_name) : ''
+      );
 
-      setNote(String(root?.note || root?.notes || ''));
+      setNote(root?.note || root?.notes ? String(root.note || root.notes) : '');
       setUpdatedAt(res?.updatedAt || root?.updatedAt || null);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'تعذر جلب بيانات الدعم';
@@ -73,12 +86,47 @@ export const SupportPayView: React.FC<SupportPayViewProps> = ({ onNotify }) => {
     loadData();
   }, []);
 
+  const validateFields = (): boolean => {
+    const trimmedInstaPhone = instaPhone.trim();
+    const trimmedInstaIpa = instaIpa.trim();
+    const trimmedInstaUrl = instaUrl.trim();
+    const trimmedInstaName = instaName.trim();
+    const trimmedVodaPhone = vodaPhone.trim();
+    const trimmedVodaName = vodaName.trim();
+
+    if (
+      !trimmedInstaPhone ||
+      !trimmedInstaIpa ||
+      !trimmedInstaUrl ||
+      !trimmedInstaName ||
+      !trimmedVodaPhone ||
+      !trimmedVodaName
+    ) {
+      const errorMsg =
+        'يرجى ملء جميع الحقول المطلوبة لـ InstaPay (الهاتف، IPA، الرابط، الاسم) وفودافون كاش (الهاتف، الاسم) قبل الحفظ. (الملاحظات فقط اختيارية)';
+      setValidationError(errorMsg);
+      onNotify('error', 'بيانات الدعم غير مكتملة', errorMsg);
+      return false;
+    }
+
+    setValidationError(null);
+    return true;
+  };
+
   const handleSaveClick = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!validateFields()) {
+      return;
+    }
     setShowConfirmModal(true);
   };
 
   const handleConfirmSave = async () => {
+    if (!validateFields()) {
+      setShowConfirmModal(false);
+      return;
+    }
+
     setShowConfirmModal(false);
     setIsSaving(true);
 
@@ -312,6 +360,14 @@ export const SupportPayView: React.FC<SupportPayViewProps> = ({ onNotify }) => {
             />
           </div>
         </div>
+
+        {/* Validation error display */}
+        {validationError && (
+          <div className="flex items-center gap-2 p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-xs">
+            <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
+            <span>{validationError}</span>
+          </div>
+        )}
 
         {/* Actions bar */}
         <div className="flex items-center justify-end gap-3 pt-2">

@@ -142,6 +142,9 @@ export interface StatusResponse {
 }
 
 export interface SupportPayData {
+  success?: boolean;
+  payload?: any;
+  hasSigningKey?: boolean;
   instapay?: {
     phone?: string;
     ipa?: string;
