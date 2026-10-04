@@ -1,0 +1,6 @@
+{
+  "name": "admin-youngtube",
+  "description": "لوحة تحكم وإدارة وتحليلات YoungTube المستقلة للمشرفين والأهل",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
