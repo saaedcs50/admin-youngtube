@@ -245,16 +245,11 @@ Never:
 
 The current Admin source search previously found no known legacy `X-Admin-Key` code path.
 
-## 15. Project Structure Observation
+## 15. Project Structure Baseline
 
-The repository contains both:
-
-- a complete project at the repository root
-- another complete-looking copy under `admin-youngtube/`
-
-The nested copy has matching `package.json`, `capacitor.config.ts`, README, and source layout at the time of inspection.
-
-This is a structural duplication that should be treated as a deliberate cleanup candidate, but DO NOT delete either copy automatically. First determine which directory is the intended deploy/project root in the current workflow.
+The repository previously contained a duplicate full project under `/admin-youngtube/`.
+The duplicate nested project has been removed.
+The repository root is now the single source of truth for the Admin application.
 
 ## 16. Android
 

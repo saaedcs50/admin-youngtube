@@ -267,6 +267,19 @@ export const TelemetryView: React.FC<TelemetryViewProps> = ({ onNotify }) => {
         </div>
       </div>
 
+      <div
+        id="admin-only-analytics-banner"
+        className="rounded-2xl border border-indigo-200/80 dark:border-indigo-900/60 bg-indigo-50/80 dark:bg-indigo-950/30 p-4 text-indigo-900 dark:text-indigo-200"
+      >
+        <div className="flex items-center gap-2">
+          <TrendingUp className="w-4 h-4 shrink-0" />
+          <span className="text-xs sm:text-sm font-extrabold">تحليلات الاستخدام — Admin فقط</span>
+        </div>
+        <p className="mt-1 text-[11px] sm:text-xs leading-relaxed font-medium opacity-90">
+          بطاقات التحليلات وإحصائيات الاستخدام موجودة هنا في تطبيق الإدارة فقط، وليست جزءًا من لوحة الأهل.
+        </p>
+      </div>
+
       {/* Mandatory Explanatory Banner */}
       <div
         id="telemetry-duration-rule-banner"
