@@ -34,6 +34,7 @@ This file is generated from direct inspection of the current GitHub `main` branc
 - `npm run preview` → Vite preview
 - `npm run clean` → remove dist
 - `npm run lint` → `tsc --noEmit`
+- `npm run test:parent-inbox` → `node --test tests/parent-inbox-ui-contract.test.mjs`
 
 ## 4. Application Shell
 
@@ -65,6 +66,7 @@ The current `TabType`/navigation includes:
 - categories
 - announcements
 - support-pay
+- parent-inbox
 - status
 - settings
 
@@ -171,6 +173,16 @@ Observed in `src/services/api.ts` and component usage:
 
 - Admin Support Pay reads and writes the Worker-backed configuration.
 
+### Parent Inbox
+
+- `GET /api/admin/parent-inbox?status=...&category=...&limit=...`
+- `POST /api/admin/parent-inbox/mark-read`
+- `POST /api/admin/parent-inbox/status`
+- `POST /api/admin/parent-inbox/reply`
+- `POST /api/admin/parent-inbox/note`
+- `POST /api/admin/parent-inbox/archive`
+- `POST /api/admin/parent-inbox/pin`
+
 ## 10. Telemetry / Analytics
 
 `src/components/TelemetryView.tsx`:
@@ -227,6 +239,14 @@ The UI should never hardcode real payment values.
 ### Announcements
 
 `AnnouncementsView.tsx` manages Worker-backed announcement content. The `all=true` admin fetch is authenticated by the Bearer client logic.
+
+### Parent Inbox
+
+`ParentInboxView.tsx` manages communications from parents:
+- lists inbox messages with category and status filters (`all`, `unread`, `in_progress`, `resolved`, `archived`)
+- supports message detail view, marking as read, replying, adding internal notes
+- supports status transitions (`new`, `in_progress`, `resolved`), pinning, and archiving
+- exposes unread/new count to sidebar badge
 
 ## 13. Status View
 
@@ -295,8 +315,8 @@ Runtime build/deployment should be verified in an environment with dependencies/
 
 Before modifying the project, read:
 
-1. `admin-youngtube_PROJECT_CONTEXT.md`
-2. `admin-youngtube_HANDOFF.md`
-3. `CHANGELOG.md` if present
+1. `PROJECT_CONTEXT.md`
+2. `HANDOFF.md`
+3. `WORKER_CLOUDFLARE.md`
 
 After every meaningful change, update the handoff/context records with exact files changed and test results.

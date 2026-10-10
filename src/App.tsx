@@ -13,6 +13,7 @@ import { ChannelsView } from './components/ChannelsView';
 import { CategoriesView } from './components/CategoriesView';
 import { AnnouncementsView } from './components/AnnouncementsView';
 import { SupportPayView } from './components/SupportPayView';
+import { ParentInboxView } from './components/ParentInboxView';
 import { StatusView } from './components/StatusView';
 import { SettingsView } from './components/SettingsView';
 import { ToastContainer } from './components/Toast';
@@ -30,6 +31,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('telemetry');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [parentInboxNewCount, setParentInboxNewCount] = useState(0);
 
   // Worker indicator state
   const [isWorkerHealthy, setIsWorkerHealthy] = useState(true);
@@ -158,6 +160,7 @@ export default function App() {
         activeTab={activeTab}
         onSelectTab={setActiveTab}
         workerUrl={getWorkerUrl()}
+        parentInboxNewCount={parentInboxNewCount}
       />
 
       {/* Main Content Area */}
@@ -193,6 +196,14 @@ export default function App() {
 
           {activeTab === 'announcements' && (
             <AnnouncementsView key={refreshTrigger} onNotify={addToast} />
+          )}
+
+          {activeTab === 'parent-inbox' && (
+            <ParentInboxView
+              key={refreshTrigger}
+              onNotify={addToast}
+              onNewCountChange={setParentInboxNewCount}
+            />
           )}
 
           {activeTab === 'support-pay' && (

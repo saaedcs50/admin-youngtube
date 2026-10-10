@@ -9,6 +9,7 @@ export type TabType =
   | 'categories'
   | 'announcements'
   | 'support-pay'
+  | 'parent-inbox'
   | 'status'
   | 'settings';
 

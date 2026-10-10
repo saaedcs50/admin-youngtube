@@ -43,6 +43,10 @@ const TAB_TITLES: Record<TabType, { title: string; subtitle: string }> = {
     title: 'التنبيهات والإعلانات',
     subtitle: 'نشر رسائل وتنبيهات فورية للمستخدمين وأولياء الأمور',
   },
+  'parent-inbox': {
+    title: 'وارد الأهل',
+    subtitle: 'رسائل أولياء الأمور والردود والحالات والملاحظات الداخلية',
+  },
   'support-pay': {
     title: 'بيانات الدعم والتبرع',
     subtitle: 'إدارة وتحديث بيانات الدفع عبر InstaPay وفودافون كاش المعروضة للمستخدمين',

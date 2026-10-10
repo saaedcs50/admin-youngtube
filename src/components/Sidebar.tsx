@@ -4,6 +4,7 @@ import {
   BarChart3,
   ExternalLink,
   Megaphone,
+  Inbox,
   Settings,
   ShieldAlert,
   Tags,
@@ -16,6 +17,7 @@ interface SidebarProps {
   activeTab: TabType;
   onSelectTab: (tab: TabType) => void;
   workerUrl: string;
+  parentInboxNewCount?: number;
 }
 
 interface NavItem {
@@ -32,11 +34,12 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'categories', label: 'إدارة التصنيفات', icon: Tags, badge: 'جديد' },
   { id: 'announcements', label: 'الإعلانات والتنبيهات', icon: Megaphone },
   { id: 'support-pay', label: 'بيانات الدعم', icon: Wallet },
+  { id: 'parent-inbox', label: 'وارد الأهل', icon: Inbox },
   { id: 'status', label: 'حالة الخادم (Status)', icon: Activity },
   { id: 'settings', label: 'الإعدادات والربط', icon: Settings },
 ];
 
-export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab, workerUrl }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab, workerUrl, parentInboxNewCount = 0 }) => {
   return (
     <>
       {/* Desktop Sidebar */}
@@ -66,6 +69,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab, worker
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
+            const badgeText = item.id === 'parent-inbox'
+              ? (parentInboxNewCount > 0 ? String(parentInboxNewCount > 99 ? '99+' : parentInboxNewCount) : undefined)
+              : item.badge;
             return (
               <button
                 key={item.id}
@@ -81,7 +87,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab, worker
                   <Icon className={`w-4 h-4 ${isActive ? 'text-slate-950' : 'text-slate-400'}`} />
                   <span>{item.label}</span>
                 </div>
-                {item.badge && (
+                {badgeText && (
                   <span
                     className={`px-1.5 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider ${
                       isActive
@@ -89,7 +95,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab, worker
                         : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
                     }`}
                   >
-                    {item.badge}
+                    {badgeText}
                   </span>
                 )}
               </button>
@@ -114,7 +120,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab, worker
       {/* Mobile Bottom / Tab Bar */}
       <nav
         id="mobile-bottom-nav"
-        className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg border-t border-slate-200 dark:border-slate-800 px-2 py-1.5 flex items-center justify-around shadow-lg"
+        className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg border-t border-slate-200 dark:border-slate-800 px-2 py-1.5 flex items-center justify-start gap-1 overflow-x-auto shadow-lg"
       >
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;
@@ -124,14 +130,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab, worker
               key={item.id}
               id={`mobile-nav-${item.id}`}
               onClick={() => onSelectTab(item.id)}
-              className={`flex flex-col items-center justify-center py-1 px-2 rounded-lg text-[10px] font-medium transition-colors ${
+              className={`relative shrink-0 flex flex-col items-center justify-center py-1 px-2 rounded-lg text-[10px] font-medium transition-colors ${
                 isActive
                   ? 'text-amber-600 dark:text-amber-400 font-bold'
                   : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
               }`}
             >
               <Icon className="w-5 h-5 mb-0.5" />
-              <span className="truncate max-w-[55px]">{item.label.split(' ')[0]}</span>
+              <span className="truncate max-w-[65px]">{item.label.split(' ')[0]}</span>
+              {item.id === 'parent-inbox' && parentInboxNewCount > 0 && <span className="absolute top-0 right-1 min-w-4 h-4 px-1 rounded-full bg-rose-600 text-white text-[9px] font-extrabold flex items-center justify-center">{parentInboxNewCount > 99 ? '99+' : parentInboxNewCount}</span>}
             </button>
           );
         })}
