@@ -94,11 +94,13 @@ Use:
 - `npm run build` (`vite build`): PASS (clean production build to `dist/`)
 - `npx cap sync android`: PASS (web assets copied to `android/app/src/main/assets/public`, plugins updated)
 - `compile_applet`: PASS (AI Studio applet compiled successfully)
+- Android App Identity verification: PASS (`app.youngtube.admin` in gradle, manifest, strings.xml, capacitor.config.ts, bundled JSON)
+- Android Update Continuity configuration: PASS (`versionCode` bump comment & dynamic CLI overrides, `signingConfigs.release` configured from env/secrets, `.gitignore` protects keystores, `ANDROID_SIGNING.md` created)
 - Prohibited strings check: PASS (0 matches across repo)
 - Parent Inbox implementation (`ParentInboxView.tsx`, types, header, sidebar): PASS (verified, contract tests passed, built)
 - Support Pay unwrapping & client validation (F-05 & F-06): PASS (code verified and tested in build)
 - Telemetry `Admin فقط` explanatory banner: PASS (verified in `TelemetryView.tsx`)
-- Documentation files in root: PASS (`PROJECT_CONTEXT.md`, `HANDOFF.md`, `WORKER_CLOUDFLARE.md`, `AI_REVIEW_INSTRUCTIONS.md`, `youngtube-parent-inbox-execution-report.md`)
+- Documentation files in root: PASS (`PROJECT_CONTEXT.md`, `HANDOFF.md`, `WORKER_CLOUDFLARE.md`, `AI_REVIEW_INSTRUCTIONS.md`, `ANDROID_SIGNING.md`, `youngtube-parent-inbox-execution-report.md`)
 - Real Worker Bearer authentication against live Cloudflare Worker: BLOCKED (requires live admin key)
 - Live Support Pay round-trip against production KV: BLOCKED (requires live admin session)
 - Android native APK compilation: BLOCKED (Android SDK / Gradle build daemon environment)
@@ -120,10 +122,11 @@ Use:
 - Support Pay source-of-truth architecture
 - category/channel/block semantics
 - Parent inbox API endpoints and authentication
+- Android package id / application id: must stay `app.youngtube.admin` (never use `app.youngtube.app`)
 
 ## Session Log & Next Agent Starting Point
 
-- **Current State**: The repository root is the sole operational application running on Vite (port 3000). Only canonical documentation files exist in root: `PROJECT_CONTEXT.md`, `HANDOFF.md`, `WORKER_CLOUDFLARE.md`, `AI_REVIEW_INSTRUCTIONS.md`, `README.md`, and `youngtube-parent-inbox-execution-report.md`.
-- **Parent Inbox Integrated**: Added `ParentInboxView.tsx` with complete filtering (all, unread, in_progress, resolved, archived), category filtering, search, reply composition, private notes, pinning, and status transitions. Integrated into `App.tsx`, `Header.tsx`, and `Sidebar.tsx` with dynamic badge indicator. Added contract tests in `tests/parent-inbox-ui-contract.test.mjs` (`npm run test:parent-inbox`).
+- **Current State**: The repository root is the sole operational application running on Vite (port 3000). Only canonical documentation files exist in root: `PROJECT_CONTEXT.md`, `HANDOFF.md`, `WORKER_CLOUDFLARE.md`, `AI_REVIEW_INSTRUCTIONS.md`, `README.md`, `ANDROID_SIGNING.md`, and `youngtube-parent-inbox-execution-report.md`.
+- **Android Identity & Update Preservation**: Verified that `app.youngtube.admin` is consistently configured across `capacitor.config.ts`, `android/app/build.gradle`, `android/app/src/main/assets/capacitor.config.json`, `android/app/src/main/res/values/strings.xml`, and `MainActivity.java`. Added dynamic `versionCode`/`versionName` property overrides and release signing configuration hooked to environment variables / GitHub Secrets (`ADMIN_RELEASE_KEYSTORE_*`). Ensured keystore binaries are ignored in root and android `.gitignore`. Created `ANDROID_SIGNING.md` documenting one-time keystore generation, consistent key update rules, and in-place upgrade behavior.
 - **Verification Matrix**: `npm run test:parent-inbox` (PASS - 3/3), `npm run lint` (PASS), `npm run build` (PASS), `npx cap sync android` (PASS), `compile_applet` (PASS), Prohibited strings grep (PASS - 0 matches).
-- **Next Agent**: The repository root is the single source of truth. Always consult `PROJECT_CONTEXT.md`, `HANDOFF.md`, and `WORKER_CLOUDFLARE.md` before making any targeted changes. Update documentation at the end of each task.
+- **Next Agent**: The repository root is the single source of truth. Always consult `PROJECT_CONTEXT.md`, `HANDOFF.md`, `WORKER_CLOUDFLARE.md`, and `ANDROID_SIGNING.md` before making any targeted changes. Update documentation at the end of each task.

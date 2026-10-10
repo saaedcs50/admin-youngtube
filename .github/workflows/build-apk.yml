@@ -43,15 +43,35 @@ jobs:
       - name: Sync Capacitor Android
         run: npx cap sync android
 
-      - name: Assemble debug APK
+      - name: Build Android APK
+        env:
+          ADMIN_KEYSTORE_BASE64: ${{ secrets.ADMIN_RELEASE_KEYSTORE_BASE64 }}
+          ADMIN_KEYSTORE_PASSWORD: ${{ secrets.ADMIN_RELEASE_KEYSTORE_PASSWORD }}
+          ADMIN_KEY_ALIAS: ${{ secrets.ADMIN_RELEASE_KEY_ALIAS }}
+          ADMIN_KEY_PASSWORD: ${{ secrets.ADMIN_RELEASE_KEY_PASSWORD }}
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          if [ -n "$ADMIN_KEYSTORE_BASE64" ]; then
+            echo "Keystore secret detected: building signed release APK..."
+            KEYSTORE_FILE=$(mktemp)
+            echo "$ADMIN_KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_FILE"
+            ADMIN_RELEASE_KEYSTORE_PATH="$KEYSTORE_FILE" \
+            ADMIN_RELEASE_KEYSTORE_PASSWORD="$ADMIN_KEYSTORE_PASSWORD" \
+            ADMIN_RELEASE_KEY_ALIAS="$ADMIN_KEY_ALIAS" \
+            ADMIN_RELEASE_KEY_PASSWORD="$ADMIN_KEY_PASSWORD" \
+            ./gradlew assembleRelease --no-daemon
+            rm -f "$KEYSTORE_FILE"
+          else
+            echo "No release keystore configured: building assembleDebug APK..."
+            ./gradlew assembleDebug --no-daemon
+          fi
 
-      - name: Upload Debug APK
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: admin-youngtube-debug-apk
-          path: android/app/build/outputs/apk/debug/*.apk
+          name: admin-youngtube-apk
+          path: |
+            android/app/build/outputs/apk/release/*.apk
+            android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
