@@ -1,5 +1,19 @@
 apply plugin: 'com.android.application'
 
+def resolvedVersionCode = 1
+if (project.hasProperty('versionCode') && project.property('versionCode') != null && project.property('versionCode').toString().trim()) {
+    resolvedVersionCode = Integer.parseInt(project.property('versionCode').toString().trim())
+} else if (System.getenv('VERSION_CODE')) {
+    resolvedVersionCode = Integer.parseInt(System.getenv('VERSION_CODE').toString().trim())
+}
+
+def resolvedVersionName = '1.0'
+if (project.hasProperty('versionName') && project.property('versionName') != null && project.property('versionName').toString().trim()) {
+    resolvedVersionName = project.property('versionName').toString().trim()
+} else if (System.getenv('VERSION_NAME')) {
+    resolvedVersionName = System.getenv('VERSION_NAME').toString().trim()
+}
+
 android {
     namespace = "app.youngtube.admin"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -8,8 +22,8 @@ android {
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         // BUMP versionCode before every admin sideload release
-        versionCode (project.findProperty("versionCode") ?: 1).toInteger()
-        versionName (project.findProperty("versionName") ?: "1.0").toString()
+        versionCode resolvedVersionCode
+        versionName resolvedVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

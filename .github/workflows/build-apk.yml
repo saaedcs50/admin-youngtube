@@ -43,6 +43,11 @@ jobs:
       - name: Sync Capacitor Android
         run: npx cap sync android
 
+      - name: Compute Android version
+        run: |
+          echo "VERSION_CODE=$((GITHUB_RUN_NUMBER + 100))" >> "$GITHUB_ENV"
+          echo "VERSION_NAME=1.0.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+
       - name: Build Android APK
         env:
           ADMIN_KEYSTORE_BASE64: ${{ secrets.ADMIN_RELEASE_KEYSTORE_BASE64 }}
