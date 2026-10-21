@@ -29,6 +29,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Run parent inbox UI contract tests
+        run: npm run test:parent-inbox
+
+      - name: Type check
+        run: npm run lint
+
       - name: Build web
         run: npm run build
         env:
