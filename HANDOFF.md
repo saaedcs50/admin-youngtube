@@ -4,7 +4,8 @@
 
 - Repo: `saaedcs50/admin-youngtube`
 - Branch: `main`
-- Current HEAD: `ac02b2a227f1079d5890568b8561efaedd3376ea`
+- Base main HEAD before this PR: `ab594c2816d496ba82f79f5ff71a50e88b671519`
+- Proposed branch: `chore/deps-ci-20261021`
 - Root app package name: `admin-youngtube`
 - App ID: `app.youngtube.admin`
 - Worker default URL: `https://youngtube-worker.saaedbelal.workers.dev`
@@ -130,3 +131,11 @@ Use:
 - **Android Identity & Update Preservation**: Verified that `app.youngtube.admin` is consistently configured across `capacitor.config.ts`, `android/app/build.gradle`, `android/app/src/main/assets/capacitor.config.json`, `android/app/src/main/res/values/strings.xml`, and `MainActivity.java`. Added dynamic `versionCode`/`versionName` property overrides and release signing configuration hooked to environment variables / GitHub Secrets (`ADMIN_RELEASE_KEYSTORE_*`). Ensured keystore binaries are ignored in root and android `.gitignore`. Created `ANDROID_SIGNING.md` documenting one-time keystore generation, consistent key update rules, and in-place upgrade behavior.
 - **Verification Matrix**: `npm run test:parent-inbox` (PASS - 3/3), `npm run lint` (PASS), `npm run build` (PASS), `npx cap sync android` (PASS), `compile_applet` (PASS), Prohibited strings grep (PASS - 0 matches).
 - **Next Agent**: The repository root is the single source of truth. Always consult `PROJECT_CONTEXT.md`, `HANDOFF.md`, `WORKER_CLOUDFLARE.md`, and `ANDROID_SIGNING.md` before making any targeted changes. Update documentation at the end of each task.
+
+## Dependency and CI Hardening — 2026-10-21
+
+- Raised the declared Vite range to ^8.3.4 and refreshed the npm lockfile for the security fix.
+- The Android build workflow now blocks before build on parent-inbox UI contract tests and TypeScript checking.
+- Added Quality Checks on pull requests targeting main. It runs dependency installation, those checks, and the web build with contents: read and checkout credential persistence disabled.
+- The pull-request workflow does not deploy, sign, upload artifacts, or access repository secrets.
+- Validation (isolated sandbox, Node 24.21.0/npm 11.19.0): npm ci PASS; parent-inbox tests 3/3; TypeScript check PASS; web build PASS. Android Gradle/APK compilation was not run. npm audit still reports moderate findings in the existing @capacitor/cli -> xcode -> uuid dependency chain; this PR does not override uuid.
