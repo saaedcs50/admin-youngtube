@@ -47,8 +47,15 @@ function statusLabel(value: string): string {
   };
   return labels[value] || value || 'غير معروف';
 }
+const METADATA_MAX_AGE_MS = 20 * 24 * 60 * 60 * 1000;
+
+function hasFreshMetadata(item: CatalogReviewItem): boolean {
+  const checkedAt = Date.parse(String(item.metadata_checked_at || ''));
+  return Number.isFinite(checkedAt) && Date.now() - checkedAt < METADATA_MAX_AGE_MS;
+}
+
 function canApprove(item: CatalogReviewItem): boolean {
-  return item.shorts_check_status === 'NOT_SHORTS' && Number.isFinite(Number(item.duration_seconds)) && Number(item.duration_seconds) > 0;
+  return hasFreshMetadata(item) && item.shorts_check_status === 'NOT_SHORTS' && Number.isFinite(Number(item.duration_seconds)) && Number(item.duration_seconds) > 0;
 }
 function canApproveForCategory(item: CatalogReviewItem, categoryId: string): boolean {
   if (!canApprove(item)) return false;
@@ -147,7 +154,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
   const decide = async (item: CatalogReviewItem, action: 'approve' | 'reject') => {
     const categoryId = selectedCategory[item.video_id] || 'stories_programs';
     if (action === 'approve' && !canApproveForCategory(item, categoryId)) {
-      onNotify('warning', 'الفيديو غير مؤهل للاعتماد', categoryId === 'music_songs_no_music' ? 'هذا المسار يتطلب تصريحًا واضحًا عالي الثقة في العنوان بأن النسخة بدون موسيقى.' : 'لا يمكن الاعتماد قبل أن تكون نتيجة Shorts هي NOT_SHORTS وأن تكون المدة معروفة وأكبر من صفر؛ شرط 120 ثانية يُطبّق فقط عند استخدام مفتاح YouTube العائلي.');
+      onNotify('warning', 'الفيديو غير مؤهل للاعتماد', categoryId === 'music_songs_no_music' ? 'هذا المسار يتطلب تصريحًا واضحًا عالي الثقة في العنوان بأن النسخة بدون موسيقى.' : 'لا يمكن الاعتماد قبل اجتياز Shorts، ومعرفة المدة، وحداثة بيانات YouTube خلال آخر 20 يومًا؛ شرط 120 ثانية يُطبّق فقط عند استخدام مفتاح YouTube العائلي.');
       return;
     }
     if (action === 'reject' && !window.confirm(`رفض الفيديو «${item.title}»؟`)) return;
@@ -303,6 +310,9 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
                   <span className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs dark:bg-slate-800">{statusLabel(item.review_status)}</span>
                   <span className={`rounded-lg px-2.5 py-1 text-xs ${item.shorts_check_status === 'NOT_SHORTS' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'}`}>{statusLabel(item.shorts_check_status)}</span>
                   <span className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs dark:bg-slate-800">المدة: {item.duration_seconds ? `${Math.floor(item.duration_seconds / 60)}د ${item.duration_seconds % 60}ث` : 'غير معروفة'}</span>
+                  <span className={`rounded-lg px-2.5 py-1 text-xs ${hasFreshMetadata(item) ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'}`}>
+                    {hasFreshMetadata(item) ? `بيانات YouTube حديثة · ${new Date(String(item.metadata_checked_at)).toLocaleDateString('ar-EG')}` : 'بيانات YouTube قديمة أو غير متحققة'}
+                  </span>
                   {item.music_variant && item.music_variant !== 'STANDARD_OR_UNSPECIFIED' && <span className="rounded-lg bg-violet-100 px-2.5 py-1 text-xs text-violet-800 dark:bg-violet-950 dark:text-violet-200">نسخة الأغنية: {item.music_variant}</span>}
                 </div>
                 {item.review_reason && <p className="mt-2 text-xs text-slate-500">السبب: {item.review_reason}</p>}
@@ -313,7 +323,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
                   {categoryOptions.map((category) => <option key={category.id} value={category.id}>{CATEGORY_LABELS[category.id] || category.name}</option>)}
                 </select>
                 <div className="grid grid-cols-2 gap-2">
-                  <button onClick={() => void decide(item, 'approve')} disabled={busyVideo === item.video_id || !canApproveForCategory(item, selectedCategory[item.video_id] || 'stories_programs')} title={!canApproveForCategory(item, selectedCategory[item.video_id] || 'stories_programs') ? 'يتطلب اجتياز Shorts ومدة معروفة؛ وفئة بدون موسيقى تتطلب تصريحًا واضحًا في العنوان' : 'اعتماد الفيديو'} className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40">
+                  <button onClick={() => void decide(item, 'approve')} disabled={busyVideo === item.video_id || !canApproveForCategory(item, selectedCategory[item.video_id] || 'stories_programs')} title={!canApproveForCategory(item, selectedCategory[item.video_id] || 'stories_programs') ? 'يتطلب بيانات حديثة، واجتياز Shorts ومدة معروفة؛ وفئة بدون موسيقى تتطلب تصريحًا واضحًا في العنوان' : 'اعتماد الفيديو'} className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40">
                     {busyVideo === item.video_id ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} اعتماد
                   </button>
                   <button onClick={() => void decide(item, 'reject')} disabled={busyVideo === item.video_id} className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-rose-300 px-3 py-2 text-sm font-bold text-rose-700 hover:bg-rose-50 disabled:opacity-40 dark:border-rose-900 dark:text-rose-300 dark:hover:bg-rose-950">
