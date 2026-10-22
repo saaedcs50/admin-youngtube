@@ -820,3 +820,51 @@ export async function saveSupportPay(payload: SupportPayData): Promise<{ ok?: bo
   });
 }
 
+
+
+export interface CatalogStatusResponse {
+  ok: boolean;
+  schemaVersion: number;
+  taxonomyVersion: string;
+  mode: string;
+  activeGeneration: string;
+  bindings: { kv: boolean; d1: boolean; discoveryQueue: boolean; processingQueue: boolean };
+  counts: {
+    categories: number; sources: number; videos: number; candidates: number;
+    needsReview: number; approvedNonShorts: number; metadataChecked: number; pilotSources: number;
+  };
+  jobs: Array<{ status: string; count: number }>;
+}
+export interface CatalogReviewItem {
+  video_id: string;
+  title: string;
+  published_at?: string | null;
+  primary_category_id?: string | null;
+  music_variant?: string | null;
+  music_classification_json?: string | null;
+  shorts_check_status: string;
+  review_status: string;
+  review_reason?: string | null;
+  duration_seconds?: number | null;
+  frame_width?: number | null;
+  frame_height?: number | null;
+  source_title?: string | null;
+}
+export async function fetchCatalogStatus(): Promise<CatalogStatusResponse> {
+  return apiRequest<CatalogStatusResponse>('/api/admin/catalog/status');
+}
+export async function startCatalogRebuild(): Promise<any> {
+  return apiRequest('/api/admin/catalog/start-rebuild', { method: 'POST', body: JSON.stringify({}) });
+}
+export async function fetchCatalogReviewQueue(limit = 40): Promise<CatalogReviewItem[]> {
+  const res = await apiRequest<{ items?: CatalogReviewItem[] }>('/api/admin/catalog/review-queue?limit=' + encodeURIComponent(String(limit)));
+  return Array.isArray(res?.items) ? res.items : [];
+}
+export async function reviewCatalogVideo(input: {
+  videoId: string; action: 'approve' | 'reject'; primaryCategoryId?: string;
+}): Promise<any> {
+  return apiRequest('/api/admin/catalog/review', { method: 'POST', body: JSON.stringify(input) });
+}
+export async function publishCatalogGeneration(): Promise<any> {
+  return apiRequest('/api/admin/catalog/publish-generation', { method: 'POST', body: JSON.stringify({}) });
+}

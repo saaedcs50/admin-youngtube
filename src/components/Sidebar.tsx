@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   Activity,
+  Database,
   BarChart3,
   ExternalLink,
   Megaphone,
@@ -32,6 +33,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'blocks', label: 'الحظر الشامل', icon: ShieldAlert },
   { id: 'channels', label: 'القنوات والمصادر', icon: Tv },
   { id: 'categories', label: 'إدارة التصنيفات', icon: Tags, badge: 'جديد' },
+  { id: 'catalog', label: 'كتالوج الفيديوهات', icon: Database, badge: 'V2' },
   { id: 'announcements', label: 'الإعلانات والتنبيهات', icon: Megaphone },
   { id: 'support-pay', label: 'بيانات الدعم', icon: Wallet },
   { id: 'parent-inbox', label: 'وارد الأهل', icon: Inbox },

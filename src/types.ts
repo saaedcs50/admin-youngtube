@@ -7,6 +7,7 @@ export type TabType =
   | 'blocks'
   | 'channels'
   | 'categories'
+  | 'catalog'
   | 'announcements'
   | 'support-pay'
   | 'parent-inbox'
