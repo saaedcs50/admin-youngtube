@@ -839,6 +839,7 @@ export interface CatalogReviewItem {
   video_id: string;
   title: string;
   published_at?: string | null;
+  metadata_checked_at?: string | null;
   primary_category_id?: string | null;
   music_variant?: string | null;
   music_classification_json?: string | null;
