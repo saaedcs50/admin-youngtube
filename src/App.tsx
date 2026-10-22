@@ -11,6 +11,7 @@ import { TelemetryView } from './components/TelemetryView';
 import { BlocksView } from './components/BlocksView';
 import { ChannelsView } from './components/ChannelsView';
 import { CategoriesView } from './components/CategoriesView';
+import { CatalogView } from './components/CatalogView';
 import { AnnouncementsView } from './components/AnnouncementsView';
 import { SupportPayView } from './components/SupportPayView';
 import { ParentInboxView } from './components/ParentInboxView';
@@ -192,6 +193,10 @@ export default function App() {
 
           {activeTab === 'categories' && (
             <CategoriesView key={refreshTrigger} onNotify={addToast} />
+          )}
+
+          {activeTab === 'catalog' && (
+            <CatalogView key={refreshTrigger} onNotify={addToast} />
           )}
 
           {activeTab === 'announcements' && (
