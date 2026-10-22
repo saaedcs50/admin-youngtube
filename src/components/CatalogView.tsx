@@ -15,7 +15,7 @@ interface CatalogViewProps {
 
 const PRIMARY_CATEGORIES = new Set([
   'learn', 'science_discovery', 'stories_programs', 'music_songs',
-  'arts_crafts', 'cooking_food', 'nature_life', 'movement_play', 'gaming',
+  'arts_crafts', 'cooking_food', 'nature_life', 'movement_play', 'gaming', 'music_songs_no_music',
 ]);
 const CATEGORY_LABELS: Record<string, string> = {
   learn: 'تعلّم',
@@ -27,6 +27,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   nature_life: 'طبيعة وحياة',
   movement_play: 'تحرّك والعب',
   gaming: 'ألعاب رقمية مناسبة',
+  music_songs_no_music: 'أغاني وأناشيد بدون موسيقى',
 };
 
 function formatCount(value: number | undefined): string {
@@ -48,6 +49,16 @@ function statusLabel(value: string): string {
 }
 function canApprove(item: CatalogReviewItem): boolean {
   return item.shorts_check_status === 'NOT_SHORTS' && Number(item.duration_seconds || 0) >= 120;
+}
+function canApproveForCategory(item: CatalogReviewItem, categoryId: string): boolean {
+  if (!canApprove(item)) return false;
+  if (categoryId !== 'music_songs_no_music') return true;
+  try {
+    const evidence = JSON.parse(String(item.music_classification_json || 'null'));
+    return evidence?.publicCategory === 'music_songs_no_music' && evidence?.matchedField === 'title' && evidence?.confidence === 'HIGH';
+  } catch {
+    return false;
+  }
 }
 
 export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
@@ -134,8 +145,9 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
   };
 
   const decide = async (item: CatalogReviewItem, action: 'approve' | 'reject') => {
-    if (action === 'approve' && !canApprove(item)) {
-      onNotify('warning', 'الفيديو غير مؤهل للاعتماد', 'لا يمكن الاعتماد قبل أن تكون نتيجة Shorts هي NOT_SHORTS وأن تكون المدة 120 ثانية على الأقل.');
+    const categoryId = selectedCategory[item.video_id] || 'stories_programs';
+    if (action === 'approve' && !canApproveForCategory(item, categoryId)) {
+      onNotify('warning', 'الفيديو غير مؤهل للاعتماد', categoryId === 'music_songs_no_music' ? 'هذا المسار يتطلب تصريحًا واضحًا عالي الثقة في العنوان بأن النسخة بدون موسيقى.' : 'لا يمكن الاعتماد قبل أن تكون نتيجة Shorts هي NOT_SHORTS وأن تكون المدة 120 ثانية على الأقل.');
       return;
     }
     if (action === 'reject' && !window.confirm(`رفض الفيديو «${item.title}»؟`)) return;
@@ -144,7 +156,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
       await reviewCatalogVideo({
         videoId: item.video_id,
         action,
-        ...(action === 'approve' ? { primaryCategoryId: selectedCategory[item.video_id] || 'stories_programs' } : {}),
+        ...(action === 'approve' ? { primaryCategoryId: categoryId } : {}),
       });
       onNotify('success', action === 'approve' ? 'تم اعتماد الفيديو' : 'تم رفض الفيديو', item.title);
       await reload(true);
@@ -301,7 +313,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
                   {categoryOptions.map((category) => <option key={category.id} value={category.id}>{CATEGORY_LABELS[category.id] || category.name}</option>)}
                 </select>
                 <div className="grid grid-cols-2 gap-2">
-                  <button onClick={() => void decide(item, 'approve')} disabled={busyVideo === item.video_id || !canApprove(item)} title={!canApprove(item) ? 'يتطلب Shorts = NOT_SHORTS ومدة 120 ثانية على الأقل' : 'اعتماد الفيديو'} className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40">
+                  <button onClick={() => void decide(item, 'approve')} disabled={busyVideo === item.video_id || !canApproveForCategory(item, selectedCategory[item.video_id] || 'stories_programs')} title={!canApproveForCategory(item, selectedCategory[item.video_id] || 'stories_programs') ? 'يتطلب اجتياز Shorts ومدة 120 ثانية؛ وفئة بدون موسيقى تتطلب تصريحًا واضحًا في العنوان' : 'اعتماد الفيديو'} className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40">
                     {busyVideo === item.video_id ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} اعتماد
                   </button>
                   <button onClick={() => void decide(item, 'reject')} disabled={busyVideo === item.video_id} className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-rose-300 px-3 py-2 text-sm font-bold text-rose-700 hover:bg-rose-50 disabled:opacity-40 dark:border-rose-900 dark:text-rose-300 dark:hover:bg-rose-950">
