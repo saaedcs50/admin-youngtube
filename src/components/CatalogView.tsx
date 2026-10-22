@@ -48,7 +48,7 @@ function statusLabel(value: string): string {
   return labels[value] || value || 'غير معروف';
 }
 function canApprove(item: CatalogReviewItem): boolean {
-  return item.shorts_check_status === 'NOT_SHORTS' && Number(item.duration_seconds || 0) >= 120;
+  return item.shorts_check_status === 'NOT_SHORTS' && Number.isFinite(Number(item.duration_seconds)) && Number(item.duration_seconds) > 0;
 }
 function canApproveForCategory(item: CatalogReviewItem, categoryId: string): boolean {
   if (!canApprove(item)) return false;
@@ -129,7 +129,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
   const publish = async () => {
     const approved = status?.counts.approvedNonShorts || 0;
     const confirmed = window.confirm(
-      `سيتم تكوين جيل جديد من الفيديوهات المعتمدة فقط، بعد فحص Shorts وبشرط مدة لا تقل عن 120 ثانية. عدد الفيديوهات المؤهلة الآن: ${formatCount(approved)}. لن يتغير الجيل النشط حتى تكتمل كتابة كل الصفحات. متابعة؟`,
+      `سيتم تكوين جيل جديد من الفيديوهات المعتمدة فقط، بعد اجتياز فحص Shorts وتوفّر مدة معروفة للفيديو. شرط 120 ثانية يظل مرتبطًا بإعداد مفتاح YouTube العائلي في تطبيق الطفل. عدد الفيديوهات المؤهلة الآن: ${formatCount(approved)}. لن يتغير الجيل النشط حتى تكتمل كتابة كل الصفحات. متابعة؟`,
     );
     if (!confirmed) return;
     setPublishing(true);
@@ -147,7 +147,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
   const decide = async (item: CatalogReviewItem, action: 'approve' | 'reject') => {
     const categoryId = selectedCategory[item.video_id] || 'stories_programs';
     if (action === 'approve' && !canApproveForCategory(item, categoryId)) {
-      onNotify('warning', 'الفيديو غير مؤهل للاعتماد', categoryId === 'music_songs_no_music' ? 'هذا المسار يتطلب تصريحًا واضحًا عالي الثقة في العنوان بأن النسخة بدون موسيقى.' : 'لا يمكن الاعتماد قبل أن تكون نتيجة Shorts هي NOT_SHORTS وأن تكون المدة 120 ثانية على الأقل.');
+      onNotify('warning', 'الفيديو غير مؤهل للاعتماد', categoryId === 'music_songs_no_music' ? 'هذا المسار يتطلب تصريحًا واضحًا عالي الثقة في العنوان بأن النسخة بدون موسيقى.' : 'لا يمكن الاعتماد قبل أن تكون نتيجة Shorts هي NOT_SHORTS وأن تكون المدة معروفة وأكبر من صفر؛ شرط 120 ثانية يُطبّق فقط عند استخدام مفتاح YouTube العائلي.');
       return;
     }
     if (action === 'reject' && !window.confirm(`رفض الفيديو «${item.title}»؟`)) return;
@@ -217,7 +217,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
               ['الفيديوهات المنقولة', counts?.videos],
               ['تحتاج مراجعة', counts?.needsReview],
               ['مرشحة', counts?.candidates],
-              ['فيديوهات اجتازت فحص Shorts', counts?.metadataChecked],
+              ['فيديوهات فُحصت بياناتها', counts?.metadataChecked],
               ['معتمدة وغير Shorts', counts?.approvedNonShorts],
               ['مصادر عينة الفحص', counts?.pilotSources],
             ].map(([label, value]) => (
@@ -313,7 +313,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
                   {categoryOptions.map((category) => <option key={category.id} value={category.id}>{CATEGORY_LABELS[category.id] || category.name}</option>)}
                 </select>
                 <div className="grid grid-cols-2 gap-2">
-                  <button onClick={() => void decide(item, 'approve')} disabled={busyVideo === item.video_id || !canApproveForCategory(item, selectedCategory[item.video_id] || 'stories_programs')} title={!canApproveForCategory(item, selectedCategory[item.video_id] || 'stories_programs') ? 'يتطلب اجتياز Shorts ومدة 120 ثانية؛ وفئة بدون موسيقى تتطلب تصريحًا واضحًا في العنوان' : 'اعتماد الفيديو'} className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40">
+                  <button onClick={() => void decide(item, 'approve')} disabled={busyVideo === item.video_id || !canApproveForCategory(item, selectedCategory[item.video_id] || 'stories_programs')} title={!canApproveForCategory(item, selectedCategory[item.video_id] || 'stories_programs') ? 'يتطلب اجتياز Shorts ومدة معروفة؛ وفئة بدون موسيقى تتطلب تصريحًا واضحًا في العنوان' : 'اعتماد الفيديو'} className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40">
                     {busyVideo === item.video_id ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} اعتماد
                   </button>
                   <button onClick={() => void decide(item, 'reject')} disabled={busyVideo === item.video_id} className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-rose-300 px-3 py-2 text-sm font-bold text-rose-700 hover:bg-rose-50 disabled:opacity-40 dark:border-rose-900 dark:text-rose-300 dark:hover:bg-rose-950">
