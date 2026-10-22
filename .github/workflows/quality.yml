@@ -32,5 +32,8 @@ jobs:
       - name: Run parent inbox UI contract tests
         run: npm run test:parent-inbox
 
+      - name: Run catalog review freshness contract tests
+        run: node --test tests/catalog-review-freshness.test.mjs
+
       - name: Build admin assets
         run: npm run build
