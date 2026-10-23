@@ -17,3 +17,16 @@ test('catalog review queue exposes metadata freshness and blocks approvals with 
   assert.match(view, /return hasFreshMetadata\(item\) && item\.shorts_check_status === 'NOT_SHORTS'/);
   assert.match(view, /بيانات YouTube قديمة أو غير متحققة/);
 });
+
+test('catalog approval requires human review attestation and offers a safe direct video preview', () => {
+  const api = read('src/services/api.ts');
+  const view = read('src/components/CatalogView.tsx');
+  assert.match(api, /safetyReviewConfirmed\?: boolean;/);
+  assert.ok(view.includes('https://www.youtube.com/watch?v='));
+  assert.ok(view.includes('encodeURIComponent(item.video_id)'));
+  assert.ok(view.includes('target="_blank"'));
+  assert.ok(view.includes('rel="noopener noreferrer"'));
+  assert.ok(view.includes('شاهدت الفيديو كاملًا وراجعت ملاءمته للأطفال'));
+  assert.ok(view.includes('safetyReviewConfirmed: safetyReviewed[item.video_id] === true'));
+  assert.ok(view.includes('safetyReviewed[item.video_id] !== true'));
+});

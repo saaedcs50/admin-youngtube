@@ -862,7 +862,7 @@ export async function fetchCatalogReviewQueue(limit = 40): Promise<CatalogReview
   return Array.isArray(res?.items) ? res.items : [];
 }
 export async function reviewCatalogVideo(input: {
-  videoId: string; action: 'approve' | 'reject'; primaryCategoryId?: string;
+  videoId: string; action: 'approve' | 'reject'; primaryCategoryId?: string; safetyReviewConfirmed?: boolean;
 }): Promise<any> {
   return apiRequest('/api/admin/catalog/review', { method: 'POST', body: JSON.stringify(input) });
 }

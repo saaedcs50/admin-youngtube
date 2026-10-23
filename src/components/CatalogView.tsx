@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  AlertTriangle, CheckCircle2, Database, Film, ListChecks, Loader2, Play,
+  AlertTriangle, CheckCircle2, Database, ExternalLink, Film, ListChecks, Loader2, Play,
   RefreshCw, ShieldCheck, UploadCloud, XCircle,
 } from 'lucide-react';
 import {
@@ -77,6 +77,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
   const [publishing, setPublishing] = useState(false);
   const [busyVideo, setBusyVideo] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<Record<string, string>>({});
+  const [safetyReviewed, setSafetyReviewed] = useState<Record<string, boolean>>({});
   const [showAllJobs, setShowAllJobs] = useState(false);
 
   const categoryOptions = useMemo(
@@ -153,6 +154,10 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
 
   const decide = async (item: CatalogReviewItem, action: 'approve' | 'reject') => {
     const categoryId = selectedCategory[item.video_id] || 'stories_programs';
+    if (action === 'approve' && safetyReviewed[item.video_id] !== true) {
+      onNotify('warning', 'تأكيد المراجعة مطلوب', 'افتح الفيديو وشاهده وراجع ملاءمته للأطفال قبل الاعتماد.');
+      return;
+    }
     if (action === 'approve' && !canApproveForCategory(item, categoryId)) {
       onNotify('warning', 'الفيديو غير مؤهل للاعتماد', categoryId === 'music_songs_no_music' ? 'هذا المسار يتطلب تصريحًا واضحًا عالي الثقة في العنوان بأن النسخة بدون موسيقى.' : 'لا يمكن الاعتماد قبل اجتياز Shorts، ومعرفة المدة، وحداثة بيانات YouTube خلال آخر 20 يومًا؛ شرط 120 ثانية يُطبّق فقط عند استخدام مفتاح YouTube العائلي.');
       return;
@@ -163,7 +168,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
       await reviewCatalogVideo({
         videoId: item.video_id,
         action,
-        ...(action === 'approve' ? { primaryCategoryId: categoryId } : {}),
+        ...(action === 'approve' ? { primaryCategoryId: categoryId, safetyReviewConfirmed: safetyReviewed[item.video_id] === true } : {}),
       });
       onNotify('success', action === 'approve' ? 'تم اعتماد الفيديو' : 'تم رفض الفيديو', item.title);
       await reload(true);
@@ -306,6 +311,16 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
               <div className="min-w-0 flex-1">
                 <h3 className="font-bold leading-6">{item.title}</h3>
                 <p className="mt-1 text-xs text-slate-500">{item.source_title || 'مصدر غير معروف'} · {item.video_id}{item.published_at ? ` · ${new Date(item.published_at).toLocaleDateString('ar-EG')}` : ''}</p>
+                <a
+                  href={`https://www.youtube.com/watch?v=${encodeURIComponent(item.video_id)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`فتح الفيديو ${item.title} على YouTube في تبويب جديد`}
+                  className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-sky-700 underline underline-offset-2 hover:text-sky-900 dark:text-sky-300 dark:hover:text-sky-200"
+                >
+                  فتح الفيديو على YouTube للمراجعة
+                  <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                </a>
                 <div className="mt-2 flex flex-wrap gap-2">
                   <span className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs dark:bg-slate-800">{statusLabel(item.review_status)}</span>
                   <span className={`rounded-lg px-2.5 py-1 text-xs ${item.shorts_check_status === 'NOT_SHORTS' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'}`}>{statusLabel(item.shorts_check_status)}</span>
@@ -322,8 +337,16 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
                 <select id={`catalog-category-${item.video_id}`} value={selectedCategory[item.video_id] || 'stories_programs'} onChange={(event) => setSelectedCategory((old) => ({ ...old, [item.video_id]: event.target.value }))} className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950">
                   {categoryOptions.map((category) => <option key={category.id} value={category.id}>{CATEGORY_LABELS[category.id] || category.name}</option>)}
                 </select>
+                <label className="mb-2 flex items-start gap-2 rounded-xl border border-slate-200 p-2 text-xs leading-5 text-slate-700 dark:border-slate-700 dark:text-slate-300">
+                  <input type="checkbox" checked={safetyReviewed[item.video_id] === true} onChange={(event) => setSafetyReviewed((old) => ({ ...old, [item.video_id]: event.target.checked }))} className="mt-1 h-4 w-4 shrink-0 accent-emerald-600" />
+                  <span>شاهدت الفيديو كاملًا وراجعت ملاءمته للأطفال</span>
+                </label>
                 <div className="grid grid-cols-2 gap-2">
-                  <button onClick={() => void decide(item, 'approve')} disabled={busyVideo === item.video_id || !canApproveForCategory(item, selectedCategory[item.video_id] || 'stories_programs')} title={!canApproveForCategory(item, selectedCategory[item.video_id] || 'stories_programs') ? 'يتطلب بيانات حديثة، واجتياز Shorts ومدة معروفة؛ وفئة بدون موسيقى تتطلب تصريحًا واضحًا في العنوان' : 'اعتماد الفيديو'} className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40">
+                  <button
+                    onClick={() => void decide(item, 'approve')}
+                    disabled={busyVideo === item.video_id || safetyReviewed[item.video_id] !== true || !canApproveForCategory(item, selectedCategory[item.video_id] || 'stories_programs')}
+                    title={safetyReviewed[item.video_id] !== true ? 'افتح الفيديو وراجعه، ثم أكّد ملاءمته للأطفال' : !canApproveForCategory(item, selectedCategory[item.video_id] || 'stories_programs') ? 'يتطلب بيانات حديثة، واجتياز Shorts ومدة معروفة؛ وفئة بدون موسيقى تتطلب تصريحًا واضحًا في العنوان' : 'اعتماد الفيديو'}
+className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40">
                     {busyVideo === item.video_id ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} اعتماد
                   </button>
                   <button onClick={() => void decide(item, 'reject')} disabled={busyVideo === item.video_id} className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-rose-300 px-3 py-2 text-sm font-bold text-rose-700 hover:bg-rose-50 disabled:opacity-40 dark:border-rose-900 dark:text-rose-300 dark:hover:bg-rose-950">
