@@ -342,7 +342,11 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
                   <span>شاهدت الفيديو كاملًا وراجعت ملاءمته للأطفال</span>
                 </label>
                 <div className="grid grid-cols-2 gap-2">
-                  <button onClick={() => void decide(item, 'approve') disabled={busyVideo === item.video_id || safetyReviewed[item.video_id] !== true || !canApproveForCategory(item, selectedCategory[item.video_id] || 'stories_programs')} title={safetyReviewed[item.video_id] !== true ? 'افتح الفيديو وراجعه، ثم أكّد ملاءمته للأطفال' : !canApproveForCategory(item, selectedCategory[item.video_id] || 'stories_programs') ? 'يتطلب بيانات حديثة، واجتياز Shorts ومدة معروفة؛ وفئة بدون موسيقى تتطلب تصريحًا واضحًا في العنوان' : 'اعتماد الفيديو'} className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40">
+                  <button
+                    onClick={() => void decide(item, 'approve')}
+                    disabled={busyVideo === item.video_id || safetyReviewed[item.video_id] !== true || !canApproveForCategory(item, selectedCategory[item.video_id] || 'stories_programs')}
+                    title={safetyReviewed[item.video_id] !== true ? 'افتح الفيديو وراجعه، ثم أكّد ملاءمته للأطفال' : !canApproveForCategory(item, selectedCategory[item.video_id] || 'stories_programs') ? 'يتطلب بيانات حديثة، واجتياز Shorts ومدة معروفة؛ وفئة بدون موسيقى تتطلب تصريحًا واضحًا في العنوان' : 'اعتماد الفيديو'}
+className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40">
                     {busyVideo === item.video_id ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} اعتماد
                   </button>
                   <button onClick={() => void decide(item, 'reject')} disabled={busyVideo === item.video_id} className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-rose-300 px-3 py-2 text-sm font-bold text-rose-700 hover:bg-rose-50 disabled:opacity-40 dark:border-rose-900 dark:text-rose-300 dark:hover:bg-rose-950">
