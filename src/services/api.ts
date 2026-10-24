@@ -828,6 +828,15 @@ export interface CatalogStatusResponse {
   taxonomyVersion: string;
   mode: string;
   activeGeneration: string;
+  autoReview?: {
+    mode: 'off' | 'shadow' | 'enforce' | string;
+    providerConfigured: boolean;
+    dailyVideoLimit: number;
+    dailyVideoSecondsLimit: number;
+    scannedToday: number;
+    scannedVideoSecondsToday: number;
+    shadowSampleCount: number;
+  };
   bindings: { kv: boolean; d1: boolean; discoveryQueue: boolean; processingQueue: boolean };
   counts: {
     categories: number; sources: number; videos: number; candidates: number;
@@ -850,6 +859,9 @@ export interface CatalogReviewItem {
   frame_width?: number | null;
   frame_height?: number | null;
   source_title?: string | null;
+  auto_reviewed_at?: string | null;
+  auto_review_queued_at?: string | null;
+  review_evidence_json?: string | null;
 }
 export async function fetchCatalogStatus(): Promise<CatalogStatusResponse> {
   return apiRequest<CatalogStatusResponse>('/api/admin/catalog/status');
@@ -865,6 +877,22 @@ export async function reviewCatalogVideo(input: {
   videoId: string; action: 'approve' | 'reject'; primaryCategoryId?: string; safetyReviewConfirmed?: boolean;
 }): Promise<any> {
   return apiRequest('/api/admin/catalog/review', { method: 'POST', body: JSON.stringify(input) });
+}
+export async function setCatalogAutoReviewMode(input: {
+  mode: 'off' | 'shadow' | 'enforce';
+  sampleAuditConfirmed?: boolean;
+}): Promise<{
+  ok: boolean;
+  autoReviewMode: 'off' | 'shadow' | 'enforce';
+  providerConfigured: boolean;
+  dailyVideoLimit: number;
+  dailyVideoSecondsLimit: number;
+  sampleAuditRequired: boolean;
+}> {
+  return apiRequest('/api/admin/catalog/auto-review-mode', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
 }
 export async function publishCatalogGeneration(): Promise<any> {
   return apiRequest('/api/admin/catalog/publish-generation', { method: 'POST', body: JSON.stringify({}) });
