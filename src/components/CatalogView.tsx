@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import {
   CatalogReviewItem, CatalogStatusResponse, fetchCatalogReviewQueue, fetchCatalogStatus,
-  fetchCategories, publishCatalogGeneration, reviewCatalogVideo, startCatalogRebuild,
+  fetchCategories, publishCatalogGeneration, reviewCatalogVideo, startCatalogRebuild, setCatalogAutoReviewMode,
 } from '../services/api';
 import { CategoryItem } from '../types';
 
@@ -68,6 +68,36 @@ function canApproveForCategory(item: CatalogReviewItem, categoryId: string): boo
   }
 }
 
+function AutoReviewEvidence({ item }: { item: CatalogReviewItem }) {
+  let scan: any = null;
+  try {
+    scan = JSON.parse(String(item.review_evidence_json || '{}'))?.autoReview || null;
+  } catch {
+    scan = null;
+  }
+  if (!scan || typeof scan !== 'object') return null;
+  const verdictLabels: Record<string, string> = {
+    SAFE: 'تقييم الآلة: آمن مبدئيًا',
+    REVIEW: 'تقييم الآلة: يحتاج تدقيقًا',
+    UNSAFE: 'تقييم الآلة: إشارة خطر',
+  };
+  const modeLabel = scan.mode === 'shadow' ? 'اختبار بلا اعتماد' : scan.mode === 'enforce' ? 'فحص في مسار الاعتماد' : 'فحص آلي';
+  const timestamps = Array.isArray(scan.evidenceTimestamps) ? scan.evidenceTimestamps.filter((value: unknown) => typeof value === 'string').slice(0, 8) : [];
+  return (
+    <div className="mt-3 rounded-xl border border-violet-200 bg-violet-50 p-3 text-xs leading-5 text-violet-950 dark:border-violet-900 dark:bg-violet-950/30 dark:text-violet-100">
+      <div className="flex flex-wrap items-center gap-2 font-extrabold">
+        <span>{verdictLabels[String(scan.verdict || '')] || 'نتيجة فحص آلي'}</span>
+        <span className="rounded-full bg-white/70 px-2 py-0.5 dark:bg-slate-900/70">{modeLabel}</span>
+        {Number.isFinite(Number(scan.confidence)) && <span>درجة الثقة: {Math.round(Number(scan.confidence) * 100)}%</span>}
+      </div>
+      {typeof scan.summary === 'string' && scan.summary && <p className="mt-1">{scan.summary}</p>}
+      {timestamps.length > 0 && <p className="mt-1">الأزمنة التي ذكرها الفحص: {timestamps.join('، ')}</p>}
+      {Array.isArray(scan.policyFlags) && scan.policyFlags.length > 0 && <p className="mt-1">إشارات السياسة: {scan.policyFlags.join('، ')}</p>}
+      <p className="mt-1 opacity-80">النتيجة الآلية مؤشر للمراجعة وليست ضمانًا بأن الفيديو خالٍ من كل مشكلة.</p>
+    </div>
+  );
+}
+
 export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
   const [status, setStatus] = useState<CatalogStatusResponse | null>(null);
   const [queue, setQueue] = useState<CatalogReviewItem[]>([]);
@@ -75,6 +105,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
   const [loading, setLoading] = useState(true);
   const [rebuilding, setRebuilding] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [autoReviewSaving, setAutoReviewSaving] = useState(false);
   const [busyVideo, setBusyVideo] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<Record<string, string>>({});
   const [safetyReviewed, setSafetyReviewed] = useState<Record<string, boolean>>({});
@@ -149,6 +180,38 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
       onNotify('error', 'تعذر تجهيز الفيد', error instanceof Error ? error.message : 'خطأ غير معروف');
     } finally {
       setPublishing(false);
+    }
+  };
+
+  const changeAutoReviewMode = async (mode: 'off' | 'shadow' | 'enforce') => {
+    const autoReview = status?.autoReview;
+    if (mode !== 'off' && autoReview?.providerConfigured !== true) {
+      onNotify('warning', 'مفتاح الفحص غير متاح', 'يجب إضافة GEMINI_API_KEY كسرّ إلى Worker أولًا؛ لم يتم تشغيل أي فحص.');
+      return;
+    }
+    if (mode === 'shadow') {
+      const confirmed = window.confirm('سيبدأ فحصًا آليًا لعينة صغيرة، دون اعتماد أو رفض الفيديوهات تلقائيًا. الحد الأقصى 24 فيديو أو 4 ساعات محتوى يوميًا، والفيديو الواحد لا يتجاوز 10 دقائق. تشغيل الاختبار؟');
+      if (!confirmed) return;
+    } else if (mode === 'enforce') {
+      if (Number(autoReview?.shadowSampleCount || 0) < 10) {
+        onNotify('warning', 'العينة التجريبية غير كافية', 'يلزم الحصول على 10 نتائج تجريبية على الأقل قبل تفعيل الاعتماد الآلي.');
+        return;
+      }
+      const confirmed = window.confirm('لا تفعّل هذا الخيار إلا بعد فحص نتائج 10 فيديوهات على الأقل من العينة التجريبية. ستُعتمد تلقائيًا الحالات عالية الثقة في نطاق محدود فقط؛ الحالات غير الواضحة ستظل خارج الفيد. هل راجعت العينة وتريد المتابعة؟');
+      if (!confirmed) return;
+    } else {
+      const confirmed = window.confirm('إيقاف جدولة الفحص الآلي الجديد؟ ستظل الفيديوهات المعتمدة سابقًا كما هي، ولن تُحذف نتائج الفحص.');
+      if (!confirmed) return;
+    }
+    setAutoReviewSaving(true);
+    try {
+      await setCatalogAutoReviewMode({ mode, ...(mode === 'enforce' ? { sampleAuditConfirmed: true } : {}) });
+      onNotify('success', mode === 'off' ? 'تم إيقاف الفحص الآلي' : mode === 'shadow' ? 'بدأ الاختبار الآلي' : 'تم تفعيل مسار الاعتماد الآلي', mode === 'shadow' ? 'الاختبار لا يعتمد أي فيديو. راجع نتائج العينة قبل التفعيل.' : mode === 'enforce' ? 'الاعتماد يقتصر على الحالات التي تجتاز كل البوابات؛ غير الواضح يبقى خارج الفيد.' : 'ستظل الموافقات السابقة محفوظة.');
+      await reload(true);
+    } catch (error) {
+      onNotify('error', 'تعذر تغيير وضع الفحص', error instanceof Error ? error.message : 'خطأ غير معروف');
+    } finally {
+      setAutoReviewSaving(false);
     }
   };
 
@@ -242,6 +305,49 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
         </>
       )}
 
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="h-5 w-5 text-violet-500" />
+              <h2 className="font-extrabold">مراجعة السلامة الآلية</h2>
+            </div>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600 dark:text-slate-400">
+              يبدأ النظام باختبار لا يغيّر قرارات النشر. يختبر محتوى الفيديو نفسه، لا اسم القناة أو العنوان وحدهما. لا يُفعّل الاعتماد الآلي إلا بعد مراجعة عينة، وفي فئات قليلة منخفضة المخاطر فقط.
+            </p>
+          </div>
+          <span className={status.autoReview?.mode === 'enforce' ? 'rounded-full bg-emerald-100 px-3 py-1 text-xs font-extrabold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : status.autoReview?.mode === 'shadow' ? 'rounded-full bg-sky-100 px-3 py-1 text-xs font-extrabold text-sky-800 dark:bg-sky-950 dark:text-sky-300' : 'rounded-full bg-slate-100 px-3 py-1 text-xs font-extrabold text-slate-700 dark:bg-slate-800 dark:text-slate-300'}>
+            {status.autoReview?.mode === 'enforce' ? 'الاعتماد الآلي مفعّل' : status.autoReview?.mode === 'shadow' ? 'اختبار بلا اعتماد' : 'الفحص الآلي متوقف'}
+          </span>
+        </div>
+        <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {[
+            ['مفتاح Gemini', status.autoReview?.providerConfigured ? 'متصل' : 'غير مضاف'],
+            ['عينة الاختبار', formatCount(status.autoReview?.shadowSampleCount) + ' / 10'],
+            ['فحوص اليوم', formatCount(status.autoReview?.scannedToday) + ' / ' + formatCount(status.autoReview?.dailyVideoLimit)],
+            ['مدة الفحص اليوم', Math.floor(Number(status.autoReview?.scannedVideoSecondsToday || 0) / 60) + ' / ' + Math.floor(Number(status.autoReview?.dailyVideoSecondsLimit || 14400) / 60) + ' دقيقة'],
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-xl bg-slate-50 p-3 dark:bg-slate-950">
+              <p className="text-xs text-slate-500">{label}</p>
+              <p className="mt-1 font-extrabold">{value}</p>
+            </div>
+          ))}
+        </div>
+        {!status.autoReview?.providerConfigured && <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">لم يتم إعداد مفتاح Gemini في Worker؛ لا يمكن بدء الاختبار حتى يُضاف كسرّ آمن في Cloudflare.</p>}
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button onClick={() => void changeAutoReviewMode('shadow')} disabled={autoReviewSaving || !status.autoReview?.providerConfigured || status.autoReview?.mode === 'shadow' || status.autoReview?.mode === 'enforce'} className="rounded-xl bg-sky-600 px-4 py-2 text-sm font-bold text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-40">
+            {autoReviewSaving ? 'جار الحفظ…' : 'ابدأ اختبار العينة'}
+          </button>
+          <button onClick={() => void changeAutoReviewMode('enforce')} disabled={autoReviewSaving || !status.autoReview?.providerConfigured || Number(status.autoReview?.shadowSampleCount || 0) < 10 || status.autoReview?.mode === 'enforce'} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40">
+            تفعيل الاعتماد الآلي
+          </button>
+          <button onClick={() => void changeAutoReviewMode('off')} disabled={autoReviewSaving || status.autoReview?.mode === 'off'} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
+            إيقاف الفحص الآلي
+          </button>
+        </div>
+        <p className="mt-3 text-xs leading-5 text-slate-500">حدود التشغيل التجريبي: 24 فيديو يوميًا، و4 ساعات فحص فيديو إجمالًا، وبحد أقصى 10 دقائق لكل فيديو. الفيديوهات غير المتاحة أو غير الواضحة لا تُعتمد آليًا. بسبب أخذ عينات من الفيديو بواسطة النموذج، لا يُعد هذا ضمانًا كاملًا للسلامة.</p>
+      </section>
+
       <section className="grid gap-3 lg:grid-cols-2">
         <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
           <div className="flex items-center gap-2">
@@ -263,7 +369,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
             <h2 className="font-extrabold">2. تجهيز جيل الفيد</h2>
           </div>
           <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-400">
-            ينشر الفيديوهات المعتمدة فقط بعد إكمال بوابة Shorts والمراجعة البشرية. يتبدل مؤشر الفيد عند اكتمال كل الصفحات بنجاح.
+            ينشر الفيديوهات المعتمدة فقط بعد اجتياز بوابة Shorts وفحص السلامة؛ الاعتماد الآلي للحالات الواضحة متاح ضمن نطاق محدود، وتظل الحالات غير الواضحة في مسار الاستثناء. يتبدل مؤشر الفيد عند اكتمال كل الصفحات بنجاح.
           </p>
           <button onClick={() => void publish()} disabled={publishing || loading || !status || (counts?.approvedNonShorts || 0) < 10} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-extrabold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50">
             {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
@@ -331,6 +437,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
                   {item.music_variant && item.music_variant !== 'STANDARD_OR_UNSPECIFIED' && <span className="rounded-lg bg-violet-100 px-2.5 py-1 text-xs text-violet-800 dark:bg-violet-950 dark:text-violet-200">نسخة الأغنية: {item.music_variant}</span>}
                 </div>
                 {item.review_reason && <p className="mt-2 text-xs text-slate-500">السبب: {item.review_reason}</p>}
+                <AutoReviewEvidence item={item} />
               </div>
               <div className="flex min-w-[240px] flex-col gap-2">
                 <label className="text-xs font-bold text-slate-500" htmlFor={`catalog-category-${item.video_id}`}>التصنيف الرئيسي المقترح</label>
