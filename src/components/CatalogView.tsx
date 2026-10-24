@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import {
   CatalogReviewItem, CatalogStatusResponse, fetchCatalogReviewQueue, fetchCatalogStatus,
-  fetchCategories, publishCatalogGeneration, reviewCatalogVideo, startCatalogRebuild, setCatalogAutoReviewMode,
+  fetchCategories, publishCatalogGeneration, reviewCatalogVideo, startCatalogRebuild, setCatalogAutoReviewMode, setCatalogAutoReviewBudget,
 } from '../services/api';
 import { CategoryItem } from '../types';
 
@@ -106,6 +106,8 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
   const [rebuilding, setRebuilding] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [autoReviewSaving, setAutoReviewSaving] = useState(false);
+  const [autoReviewBudgetSaving, setAutoReviewBudgetSaving] = useState(false);
+  const [autoReviewDailyHours, setAutoReviewDailyHours] = useState<number>(8);
   const [busyVideo, setBusyVideo] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<Record<string, string>>({});
   const [safetyReviewed, setSafetyReviewed] = useState<Record<string, boolean>>({});
@@ -125,6 +127,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
         fetchCategories(),
       ]);
       setStatus(nextStatus);
+      setAutoReviewDailyHours([8, 24, 72].includes(Number(nextStatus.autoReview?.dailyVideoHours)) ? Number(nextStatus.autoReview?.dailyVideoHours) : 8);
       setQueue(nextQueue);
       setCategories(nextCategories);
       setSelectedCategory((previous) => {
@@ -180,6 +183,32 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
       onNotify('error', 'تعذر تجهيز الفيد', error instanceof Error ? error.message : 'خطأ غير معروف');
     } finally {
       setPublishing(false);
+    }
+  };
+
+  const changeAutoReviewBudget = async () => {
+    if (!status?.autoReview) return;
+    const hours = autoReviewDailyHours as 8 | 24 | 72;
+    let paidTierConfirmed = false;
+    if (hours > 8) {
+      paidTierConfirmed = window.confirm(
+        'هذا الإعداد يسمح لـ YoungTube بطلب فحص حتى ' + hours + ' ساعة من محتوى الفيديو يوميًا. لا يرفع هذا حدود Google نفسها؛ يتطلب مشروع Gemini على الخطة المدفوعة، وقد تنشأ رسوم بحسب استهلاك النموذج. هل تحققت من الخطة والميزانية وتريد الحفظ؟',
+      );
+      if (!paidTierConfirmed) return;
+    }
+    setAutoReviewBudgetSaving(true);
+    try {
+      const result = await setCatalogAutoReviewBudget({
+        dailyVideoHours: hours,
+        dailyVideoLimit: Math.max(2000, Number(status.autoReview.dailyVideoLimit || 2000)),
+        paidTierConfirmed,
+      });
+      onNotify('success', 'تم حفظ حدود الفحص', 'الحد اليومي الآن ' + result.dailyVideoHours + ' ساعة فيديو، مع دفعات من ' + result.batchSize + ' فيديوهات لكل طلب.');
+      await reload(true);
+    } catch (error) {
+      onNotify('error', 'تعذر حفظ حدود الفحص', error instanceof Error ? error.message : 'خطأ غير معروف');
+    } finally {
+      setAutoReviewBudgetSaving(false);
     }
   };
 
@@ -334,6 +363,20 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
           ))}
         </div>
         {!status.autoReview?.providerConfigured && <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">لم يتم إعداد مفتاح Gemini في Worker؛ لا يمكن بدء الاختبار حتى يُضاف كسرّ آمن في Cloudflare.</p>}
+        <div className="mt-4 grid gap-3 rounded-xl border border-slate-200 p-3 dark:border-slate-800 sm:grid-cols-[1fr_auto] sm:items-end">
+          <div>
+            <label htmlFor="catalog-auto-review-hours" className="mb-1 block text-xs font-bold text-slate-600 dark:text-slate-400">حد ساعات الفيديو المفحوصة يوميًا</label>
+            <select id="catalog-auto-review-hours" value={autoReviewDailyHours} onChange={(event) => setAutoReviewDailyHours(Number(event.target.value))} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950">
+              <option value={8}>8 ساعات — مجاني أو غير متحقق من الخطة</option>
+              <option value={24}>24 ساعة — يتطلب خطة مدفوعة</option>
+              <option value={72}>72 ساعة — تسريع أعلى، يتطلب خطة مدفوعة</option>
+            </select>
+            <p className="mt-1 text-xs leading-5 text-slate-500">يظل الحد الفعلي خاضعًا لحصص Google ومعدل الطلبات. الدفعات الجديدة تشمل حتى 10 فيديوهات في الطلب، ولا يعني ذلك أن كل فيديو سيُعتمد.</p>
+          </div>
+          <button onClick={() => void changeAutoReviewBudget()} disabled={autoReviewBudgetSaving || !status.autoReview} className="rounded-xl border border-violet-300 px-4 py-2 text-sm font-bold text-violet-800 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-violet-800 dark:text-violet-200 dark:hover:bg-violet-950">
+            {autoReviewBudgetSaving ? 'جار الحفظ…' : 'حفظ سقف الساعات'}
+          </button>
+        </div>
         <div className="mt-4 flex flex-wrap gap-2">
           <button onClick={() => void changeAutoReviewMode('shadow')} disabled={autoReviewSaving || !status.autoReview?.providerConfigured || status.autoReview?.mode === 'shadow' || status.autoReview?.mode === 'enforce'} className="rounded-xl bg-sky-600 px-4 py-2 text-sm font-bold text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-40">
             {autoReviewSaving ? 'جار الحفظ…' : 'ابدأ اختبار العينة'}
@@ -345,7 +388,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
             إيقاف الفحص الآلي
           </button>
         </div>
-        <p className="mt-3 text-xs leading-5 text-slate-500">حدود التشغيل التجريبي: 24 فيديو يوميًا، و4 ساعات فحص فيديو إجمالًا، وبحد أقصى 10 دقائق لكل فيديو. الفيديوهات غير المتاحة أو غير الواضحة لا تُعتمد آليًا. بسبب أخذ عينات من الفيديو بواسطة النموذج، لا يُعد هذا ضمانًا كاملًا للسلامة.</p>
+        <p className="mt-3 text-xs leading-5 text-slate-500">حدود التشغيل: حتى 2,000 فيديو يوميًا على دفعات من 10، وبحد محتوى افتراضي 8 ساعات يوميًا؛ يمكن اختيار 24 أو 72 ساعة لمشروع Gemini مدفوع بعد تأكيد الميزانية. أقصى مدة للفيديو في هذا المسار 30 دقيقة. الفيديوهات غير المتاحة أو غير الواضحة لا تُعتمد آليًا. بسبب أخذ عينات من الفيديو بواسطة النموذج، لا يُعد هذا ضمانًا كاملًا للسلامة.</p>
       </section>
 
       <section className="grid gap-3 lg:grid-cols-2">
