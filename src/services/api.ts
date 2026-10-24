@@ -833,6 +833,11 @@ export interface CatalogStatusResponse {
     providerConfigured: boolean;
     dailyVideoLimit: number;
     dailyVideoSecondsLimit: number;
+    dailyVideoHours: number;
+    maxDailyVideoHours: number;
+    batchSize: number;
+    maxVideoSeconds: number;
+    pauseUntil: string | null;
     scannedToday: number;
     scannedVideoSecondsToday: number;
     shadowSampleCount: number;
@@ -890,6 +895,23 @@ export async function setCatalogAutoReviewMode(input: {
   sampleAuditRequired: boolean;
 }> {
   return apiRequest('/api/admin/catalog/auto-review-mode', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+export async function setCatalogAutoReviewBudget(input: {
+  dailyVideoHours: 8 | 24 | 72;
+  dailyVideoLimit?: number;
+  paidTierConfirmed?: boolean;
+}): Promise<{
+  ok: boolean;
+  dailyVideoLimit: number;
+  dailyVideoSecondsLimit: number;
+  dailyVideoHours: number;
+  providerConfigured: boolean;
+  batchSize: number;
+}> {
+  return apiRequest('/api/admin/catalog/auto-review-budget', {
     method: 'POST',
     body: JSON.stringify(input),
   });
