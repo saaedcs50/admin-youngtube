@@ -35,5 +35,8 @@ jobs:
       - name: Run catalog review freshness contract tests
         run: node --test tests/catalog-review-freshness.test.mjs
 
+      - name: Run Catalog V2 white-screen regression tests
+        run: node --test tests/catalog-white-screen.test.mjs
+
       - name: Build admin assets
         run: npm run build

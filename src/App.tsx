@@ -18,6 +18,7 @@ import { ParentInboxView } from './components/ParentInboxView';
 import { StatusView } from './components/StatusView';
 import { SettingsView } from './components/SettingsView';
 import { ToastContainer } from './components/Toast';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import {
   clearAdminKey,
   fetchStatus,
@@ -179,6 +180,7 @@ export default function App() {
         />
 
         <main id="main-content-view" className="flex-1 p-4 sm:p-6 max-w-7xl w-full mx-auto">
+          <ErrorBoundary fallbackTitle="تعذر عرض هذا القسم">
           {activeTab === 'telemetry' && (
             <TelemetryView key={refreshTrigger} onNotify={addToast} />
           )}
@@ -228,6 +230,7 @@ export default function App() {
               onToggleTheme={toggleTheme}
             />
           )}
+          </ErrorBoundary>
         </main>
       </div>
 

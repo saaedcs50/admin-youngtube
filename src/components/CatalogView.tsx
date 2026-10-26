@@ -103,6 +103,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
   const [queue, setQueue] = useState<CatalogReviewItem[]>([]);
   const [categories, setCategories] = useState<CategoryItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [rebuilding, setRebuilding] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [autoReviewSaving, setAutoReviewSaving] = useState(false);
@@ -120,6 +121,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
 
   const reload = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
+    setLoadError(null);
     try {
       const [nextStatus, nextQueue, nextCategories] = await Promise.all([
         fetchCatalogStatus(),
@@ -143,6 +145,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'تعذر الاتصال بخدمة الكتالوج';
+      setLoadError(message);
       if (!quiet) onNotify('error', 'تعذر تحميل الكتالوج', message);
     } finally {
       if (!quiet) setLoading(false);
@@ -219,7 +222,14 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
       return;
     }
     if (mode === 'shadow') {
-      const confirmed = window.confirm('سيبدأ فحصًا آليًا لعينة صغيرة، دون اعتماد أو رفض الفيديوهات تلقائيًا. الحد الأقصى 24 فيديو أو 4 ساعات محتوى يوميًا، والفيديو الواحد لا يتجاوز 10 دقائق. تشغيل الاختبار؟');
+      const dailyVideoLimit = Number(autoReview?.dailyVideoLimit ?? 24);
+      const dailyVideoSecondsLimit = Number(autoReview?.dailyVideoSecondsLimit ?? 14400);
+      const maxVideoSeconds = Number(autoReview?.maxVideoSeconds ?? 600);
+      const dailyVideoHours = (dailyVideoSecondsLimit / 3600).toLocaleString('ar-EG', { maximumFractionDigits: 1 });
+      const maxVideoMinutes = Math.max(1, Math.round(maxVideoSeconds / 60));
+      const confirmed = window.confirm(
+        `سيبدأ اختبارًا آليًا لا يعتمد الفيديوهات ولا يرفضها تلقائيًا. الحدود الحالية: حتى ${formatCount(dailyVideoLimit)} فيديو يوميًا، و${dailyVideoHours} ساعة محتوى يوميًا، ومدة ${maxVideoMinutes} دقيقة كحد أقصى للفيديو الواحد. يظل التنفيذ خاضعًا لحصص Google. هل تريد تشغيل الاختبار؟`,
+      );
       if (!confirmed) return;
     } else if (mode === 'enforce') {
       if (Number(autoReview?.shadowSampleCount || 0) < 10) {
@@ -274,6 +284,16 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
   const counts = status?.counts;
   const bindingStatus = status?.bindings;
   const hasBindings = Boolean(bindingStatus?.kv && bindingStatus?.d1 && bindingStatus?.discoveryQueue && bindingStatus?.processingQueue);
+
+  if (!status) {
+    return (
+      <section className="m-4 rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900" role={loading ? 'status' : 'alert'} dir="rtl" aria-live="polite">
+        <h2 className="font-extrabold">{loading ? 'جاري تحميل كتالوج المحتوى…' : 'تعذر تحميل كتالوج المحتوى'}</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-400">{loading ? 'يتم جلب حالة الكتالوج من Worker.' : loadError || 'لم تصل حالة صالحة من Worker. تحقق من الاتصال ثم أعد المحاولة.'}</p>
+        {!loading && <button onClick={() => void reload()} className="mt-4 rounded-xl bg-amber-400 px-4 py-2 text-sm font-bold text-slate-950">إعادة المحاولة</button>}
+      </section>
+    );
+  }
 
   return (
     <div className="space-y-6" dir="rtl">
