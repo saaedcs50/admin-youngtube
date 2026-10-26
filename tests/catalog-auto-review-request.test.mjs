@@ -158,3 +158,17 @@ test('Modal limit fallbacks match the Worker server defaults, not the old dialog
   assert.doesNotMatch(view, /dailyVideoLimit \?\? 24/);
   assert.doesNotMatch(view, /maxVideoSeconds \?\? 600/);
 });
+
+
+test('Catalog V2 shows Worker scheduler diagnostics without implying that scheduling equals review completion', () => {
+  const view = read('src/components/CatalogView.tsx');
+  const api = read('src/services/api.ts');
+  assert.match(api, /export interface CatalogAutoReviewScheduleStatus/);
+  assert.match(api, /lastSchedule\?: CatalogAutoReviewScheduleStatus/);
+  assert.match(view, /آخر نتيجة للجدولة \(ليست نتيجة مراجعة فيديو\)/);
+  assert.match(view, /scheduleOutcomeLabel\(status\.autoReview\.lastSchedule\.scheduleOutcome\)/);
+  assert.match(view, /فيديوهات مؤهلة/);
+  assert.match(view, /فيديوهات جرى جدولتها/);
+  assert.match(view, /دفعات مراجعة بالطابور/);
+  assert.match(view, /هذه البيانات تثبت نتيجة الجدولة فقط/);
+});
