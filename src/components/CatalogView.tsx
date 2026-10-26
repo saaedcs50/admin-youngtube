@@ -4,7 +4,7 @@ import {
   RefreshCw, ShieldCheck, UploadCloud, XCircle,
 } from 'lucide-react';
 import {
-  CatalogReviewItem, CatalogStatusResponse, fetchCatalogReviewQueue, fetchCatalogStatus,
+  ApiRequestError, CatalogReviewItem, CatalogStatusResponse, fetchCatalogReviewQueue, fetchCatalogStatus,
   fetchCategories, publishCatalogGeneration, reviewCatalogVideo, startCatalogRebuild, setCatalogAutoReviewMode, setCatalogAutoReviewBudget,
 } from '../services/api';
 import { CategoryItem } from '../types';
@@ -280,15 +280,24 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
     try {
       let responseReceived = false;
       let responseOk = false;
+      let requestFailureKind: 'network' | 'http' | 'unknown' = 'unknown';
+      let requestHttpStatus: number | undefined;
       try {
         const result = await setCatalogAutoReviewMode({ mode, ...(mode === 'enforce' ? { sampleAuditConfirmed: true } : {}) });
         responseReceived = true;
         responseOk = result?.ok === true && result?.autoReviewMode === mode;
-      } catch {
-        responseReceived = false;
+      } catch (error) {
+        if (error instanceof ApiRequestError) {
+          requestFailureKind = error.kind;
+          requestHttpStatus = error.status;
+          responseReceived = error.kind === 'http';
+        } else {
+          requestFailureKind = 'unknown';
+          responseReceived = false;
+        }
       }
       if (!responseReceived || !responseOk) {
-        const outcome = deriveAutoReviewRequestOutcome({ requestedMode: mode, responseReceived, responseOk, rereadFailed: false, previousCount });
+        const outcome = deriveAutoReviewRequestOutcome({ requestedMode: mode, responseReceived, responseOk, rereadFailed: false, previousCount, requestFailureKind, requestHttpStatus });
         setAutoReviewRequest(outcome);
         onNotify('error', 'تعذر تغيير وضع الفحص', outcome.message);
         return;
@@ -347,7 +356,19 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
       setStatus(nextStatus);
       const nextCount = typeof nextStatus.autoReview?.shadowSampleCount === 'number' ? nextStatus.autoReview.shadowSampleCount : null;
       setAutoReviewRequest((previous) => {
-        if (!previous || previous.kind !== 'mode-confirmed-awaiting-result') return previous;
+        if (!previous) return previous;
+        if (previous.kind === 're-read-failed') {
+          return deriveAutoReviewRequestOutcome({
+            requestedMode: previous.mode,
+            responseReceived: true,
+            responseOk: true,
+            rereadFailed: false,
+            rereadMode: nextStatus.autoReview?.mode,
+            rereadCount: nextCount,
+            previousCount: previous.previousCount,
+          });
+        }
+        if (previous.kind !== 'mode-confirmed-awaiting-result') return previous;
         if (nextStatus.autoReview?.mode !== 'shadow') return previous;
         if (nextCount !== null && previous.previousCount !== null && nextCount > previous.previousCount) {
           return deriveAutoReviewRequestOutcome({ requestedMode: 'shadow', responseReceived: true, responseOk: true, rereadFailed: false, rereadMode: 'shadow', rereadCount: nextCount, previousCount: previous.previousCount });
