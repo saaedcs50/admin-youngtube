@@ -8,6 +8,7 @@ import {
   fetchCategories, publishCatalogGeneration, reviewCatalogVideo, startCatalogRebuild, setCatalogAutoReviewMode, setCatalogAutoReviewBudget,
 } from '../services/api';
 import { CategoryItem } from '../types';
+import { ConfirmModal } from './ConfirmModal';
 
 interface CatalogViewProps {
   onNotify: (type: 'success' | 'error' | 'info' | 'warning', title: string, desc?: string) => void;
@@ -109,6 +110,8 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
   const [autoReviewSaving, setAutoReviewSaving] = useState(false);
   const [autoReviewBudgetSaving, setAutoReviewBudgetSaving] = useState(false);
   const [autoReviewDailyHours, setAutoReviewDailyHours] = useState<number>(8);
+  const [pendingAutoReviewMode, setPendingAutoReviewMode] = useState<'off' | 'shadow' | 'enforce' | null>(null);
+  const [autoReviewRequest, setAutoReviewRequest] = useState<{ kind: 'confirmed' | 'mismatch' | 'failed'; message: string } | null>(null);
   const [busyVideo, setBusyVideo] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<Record<string, string>>({});
   const [safetyReviewed, setSafetyReviewed] = useState<Record<string, boolean>>({});
@@ -215,42 +218,96 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
     }
   };
 
-  const changeAutoReviewMode = async (mode: 'off' | 'shadow' | 'enforce') => {
+  // Mode changes are confirmed through the in-panel ConfirmModal, not a native dialog:
+  // a native dialog can be dismissed silently by the browser/automation with no trace,
+  // which previously left the panel showing a "success" toast while the mode never changed.
+  // requestAutoReviewMode only opens the modal; confirmAutoReviewMode performs the request,
+  // validates the response, and verifies the reloaded mode before reporting success.
+  const requestAutoReviewMode = (mode: 'off' | 'shadow' | 'enforce') => {
     const autoReview = status?.autoReview;
     if (mode !== 'off' && autoReview?.providerConfigured !== true) {
       onNotify('warning', 'مفتاح الفحص غير متاح', 'يجب إضافة GEMINI_API_KEY كسرّ إلى Worker أولًا؛ لم يتم تشغيل أي فحص.');
       return;
     }
-    if (mode === 'shadow') {
-      const dailyVideoLimit = Number(autoReview?.dailyVideoLimit ?? 24);
-      const dailyVideoSecondsLimit = Number(autoReview?.dailyVideoSecondsLimit ?? 14400);
-      const maxVideoSeconds = Number(autoReview?.maxVideoSeconds ?? 600);
+    if (mode === 'enforce' && Number(autoReview?.shadowSampleCount || 0) < 10) {
+      onNotify('warning', 'العينة التجريبية غير كافية', 'يلزم الحصول على 10 نتائج تجريبية على الأقل قبل تفعيل الاعتماد الآلي.');
+      return;
+    }
+    setPendingAutoReviewMode(mode);
+  };
+
+  const pendingAutoReviewTitle = pendingAutoReviewMode === 'shadow'
+    ? 'بدء اختبار العينة'
+    : pendingAutoReviewMode === 'enforce'
+      ? 'تفعيل الاعتماد الآلي'
+      : 'إيقاف الفحص الآلي';
+
+  const pendingAutoReviewMessage = (() => {
+    if (pendingAutoReviewMode === 'shadow') {
+      const dailyVideoLimit = Number(status?.autoReview?.dailyVideoLimit ?? 2000);
+      const dailyVideoSecondsLimit = Number(status?.autoReview?.dailyVideoSecondsLimit ?? 28800);
+      const maxVideoSeconds = Number(status?.autoReview?.maxVideoSeconds ?? 1800);
       const dailyVideoHours = (dailyVideoSecondsLimit / 3600).toLocaleString('ar-EG', { maximumFractionDigits: 1 });
       const maxVideoMinutes = Math.max(1, Math.round(maxVideoSeconds / 60));
-      const confirmed = window.confirm(
-        `سيبدأ اختبارًا آليًا لا يعتمد الفيديوهات ولا يرفضها تلقائيًا. الحدود الحالية: حتى ${formatCount(dailyVideoLimit)} فيديو يوميًا، و${dailyVideoHours} ساعة محتوى يوميًا، ومدة ${maxVideoMinutes} دقيقة كحد أقصى للفيديو الواحد. يظل التنفيذ خاضعًا لحصص Google. هل تريد تشغيل الاختبار؟`,
-      );
-      if (!confirmed) return;
-    } else if (mode === 'enforce') {
-      if (Number(autoReview?.shadowSampleCount || 0) < 10) {
-        onNotify('warning', 'العينة التجريبية غير كافية', 'يلزم الحصول على 10 نتائج تجريبية على الأقل قبل تفعيل الاعتماد الآلي.');
-        return;
-      }
-      const confirmed = window.confirm('لا تفعّل هذا الخيار إلا بعد فحص نتائج 10 فيديوهات على الأقل من العينة التجريبية. ستُعتمد تلقائيًا الحالات عالية الثقة في نطاق محدود فقط؛ الحالات غير الواضحة ستظل خارج الفيد. هل راجعت العينة وتريد المتابعة؟');
-      if (!confirmed) return;
-    } else {
-      const confirmed = window.confirm('إيقاف جدولة الفحص الآلي الجديد؟ ستظل الفيديوهات المعتمدة سابقًا كما هي، ولن تُحذف نتائج الفحص.');
-      if (!confirmed) return;
+      return `سيبدأ اختبارًا آليًا لا يعتمد الفيديوهات ولا يرفضها تلقائيًا. الحدود الحالية: حتى ${formatCount(dailyVideoLimit)} فيديو يوميًا، و${dailyVideoHours} ساعة محتوى يوميًا، ومدة ${maxVideoMinutes} دقيقة كحد أقصى للفيديو الواحد. يظل التنفيذ خاضعًا لحصص Google. هل تريد تشغيل الاختبار؟`;
     }
+    if (pendingAutoReviewMode === 'enforce') {
+      return 'لا تفعّل هذا الخيار إلا بعد فحص نتائج 10 فيديوهات على الأقل من العينة التجريبية. ستُعتمد تلقائيًا الحالات عالية الثقة في نطاق محدود فقط؛ الحالات غير الواضحة ستظل خارج الفيد. هل راجعت العينة وتريد المتابعة؟';
+    }
+    if (pendingAutoReviewMode === 'off') {
+      return 'إيقاف جدولة الفحص الآلي الجديد؟ ستظل الفيديوهات المعتمدة سابقًا كما هي، ولن تُحذف نتائج الفحص.';
+    }
+    return '';
+  })();
+
+  const autoReviewModeLabel = (mode?: string) => (mode === 'enforce'
+    ? 'الاعتماد الآلي مفعّل'
+    : mode === 'shadow'
+      ? 'اختبار بلا اعتماد'
+      : 'الفحص الآلي متوقف');
+
+  const confirmAutoReviewMode = async () => {
+    const mode = pendingAutoReviewMode;
+    if (!mode) return;
     setAutoReviewSaving(true);
     try {
-      await setCatalogAutoReviewMode({ mode, ...(mode === 'enforce' ? { sampleAuditConfirmed: true } : {}) });
-      onNotify('success', mode === 'off' ? 'تم إيقاف الفحص الآلي' : mode === 'shadow' ? 'بدأ الاختبار الآلي' : 'تم تفعيل مسار الاعتماد الآلي', mode === 'shadow' ? 'الاختبار لا يعتمد أي فيديو. راجع نتائج العينة قبل التفعيل.' : mode === 'enforce' ? 'الاعتماد يقتصر على الحالات التي تجتاز كل البوابات؛ غير الواضح يبقى خارج الفيد.' : 'ستظل الموافقات السابقة محفوظة.');
+      const result = await setCatalogAutoReviewMode({ mode, ...(mode === 'enforce' ? { sampleAuditConfirmed: true } : {}) });
+      if (result?.ok !== true || result?.autoReviewMode !== mode) {
+        setAutoReviewRequest({
+          kind: 'failed',
+          message: 'وصلت استجابة غير مؤكدة من Worker؛ لم يتم تأكيد تغيير وضع الفحص. أعد المحاولة أو راجع حالة الخدمة.',
+        });
+        onNotify('error', 'تعذر تأكيد تغيير وضع الفحص', 'استجابة Worker لم تؤكد الوضع المطلوب.');
+        return;
+      }
+      const nextStatus = await fetchCatalogStatus();
+      if (nextStatus.autoReview?.mode !== mode) {
+        setAutoReviewRequest({
+          kind: 'mismatch',
+          message: `تم إرسال الطلب وقبله Worker، لكن الوضع الحالي ما زال "${autoReviewModeLabel(nextStatus.autoReview?.mode)}" وليس الوضع المطلوب — لم يتغير وضع الفحص رغم قبول الطلب. أعد المحاولة أو راجع حالة الخدمة.`,
+        });
+        onNotify('warning', 'وضع الفحص لم يتغير', 'الاستجابة قُبلت لكن إعادة القراءة أظهرت الوضع القديم.');
+      } else {
+        setAutoReviewRequest({
+          kind: 'confirmed',
+          message: mode === 'shadow'
+            ? 'تم تأكيد وضع الفحص: اختبار بلا اعتماد. الاختبار لا يعتمد أي فيديو؛ راجع نتائج العينة قبل التفعيل.'
+            : mode === 'enforce'
+              ? 'تم تأكيد وضع الفحص: الاعتماد الآلي مفعّل. الاعتماد يقتصر على الحالات التي تجتاز كل البوابات؛ غير الواضح يبقى خارج الفيد.'
+              : 'تم تأكيد إيقاف الفحص الآلي. ستظل الموافقات السابقة محفوظة.',
+        });
+        onNotify('success', mode === 'off' ? 'تم إيقاف الفحص الآلي' : mode === 'shadow' ? 'بدأ الاختبار الآلي' : 'تم تفعيل مسار الاعتماد الآلي', mode === 'shadow' ? 'الاختبار لا يعتمد أي فيديو. راجع نتائج العينة قبل التفعيل.' : mode === 'enforce' ? 'الاعتماد يقتصر على الحالات التي تجتاز كل البوابات؛ غير الواضح يبقى خارج الفيد.' : 'ستظل الموافقات السابقة محفوظة.');
+      }
       await reload(true);
     } catch (error) {
+      setAutoReviewRequest({
+        kind: 'failed',
+        message: `تعذر إرسال طلب تغيير وضع الفحص: ${error instanceof Error ? error.message : 'خطأ غير معروف'}`,
+      });
       onNotify('error', 'تعذر تغيير وضع الفحص', error instanceof Error ? error.message : 'خطأ غير معروف');
     } finally {
       setAutoReviewSaving(false);
+      setPendingAutoReviewMode(null);
     }
   };
 
@@ -398,16 +455,31 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
           </button>
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
-          <button onClick={() => void changeAutoReviewMode('shadow')} disabled={autoReviewSaving || !status.autoReview?.providerConfigured || status.autoReview?.mode === 'shadow' || status.autoReview?.mode === 'enforce'} className="rounded-xl bg-sky-600 px-4 py-2 text-sm font-bold text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-40">
+          <button onClick={() => requestAutoReviewMode('shadow')} disabled={autoReviewSaving || !status.autoReview?.providerConfigured || status.autoReview?.mode === 'shadow' || status.autoReview?.mode === 'enforce'} className="rounded-xl bg-sky-600 px-4 py-2 text-sm font-bold text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-40">
             {autoReviewSaving ? 'جار الحفظ…' : 'ابدأ اختبار العينة'}
           </button>
-          <button onClick={() => void changeAutoReviewMode('enforce')} disabled={autoReviewSaving || !status.autoReview?.providerConfigured || Number(status.autoReview?.shadowSampleCount || 0) < 10 || status.autoReview?.mode === 'enforce'} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40">
+          <button onClick={() => requestAutoReviewMode('enforce')} disabled={autoReviewSaving || !status.autoReview?.providerConfigured || Number(status.autoReview?.shadowSampleCount || 0) < 10 || status.autoReview?.mode === 'enforce'} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40">
             تفعيل الاعتماد الآلي
           </button>
-          <button onClick={() => void changeAutoReviewMode('off')} disabled={autoReviewSaving || status.autoReview?.mode === 'off'} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
+          <button onClick={() => requestAutoReviewMode('off')} disabled={autoReviewSaving || status.autoReview?.mode === 'off'} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
             إيقاف الفحص الآلي
           </button>
         </div>
+        {autoReviewRequest && (
+          <p className={`mt-3 rounded-xl border p-3 text-xs leading-5 ${autoReviewRequest.kind === 'confirmed' ? 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100' : autoReviewRequest.kind === 'mismatch' ? 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100' : 'border-red-200 bg-red-50 text-red-900 dark:border-red-900 dark:bg-red-950/30 dark:text-red-100'}`}>
+            {autoReviewRequest.message}
+          </p>
+        )}
+        <ConfirmModal
+          isOpen={pendingAutoReviewMode !== null}
+          title={pendingAutoReviewTitle}
+          message={pendingAutoReviewMessage}
+          confirmLabel={pendingAutoReviewMode === 'shadow' ? 'بدء الاختبار' : pendingAutoReviewMode === 'enforce' ? 'تفعيل الاعتماد' : 'إيقاف الفحص'}
+          cancelLabel="إلغاء"
+          isLoading={autoReviewSaving}
+          onConfirm={() => void confirmAutoReviewMode()}
+          onCancel={() => setPendingAutoReviewMode(null)}
+        />
         <p className="mt-3 text-xs leading-5 text-slate-500">حدود التشغيل: حتى 2,000 فيديو يوميًا على دفعات من 10، وبحد محتوى افتراضي 8 ساعات يوميًا؛ يمكن اختيار 24 أو 72 ساعة لمشروع Gemini مدفوع بعد تأكيد الميزانية. أقصى مدة للفيديو في هذا المسار 30 دقيقة. الفيديوهات غير المتاحة أو غير الواضحة لا تُعتمد آليًا. بسبب أخذ عينات من الفيديو بواسطة النموذج، لا يُعد هذا ضمانًا كاملًا للسلامة.</p>
       </section>
 

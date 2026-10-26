@@ -139,3 +139,26 @@ Use:
 - Added Quality Checks on pull requests targeting main. It runs dependency installation, those checks, and the web build with contents: read and checkout credential persistence disabled.
 - The pull-request workflow does not deploy, sign, upload artifacts, or access repository secrets.
 - Validation (isolated sandbox, Node 24.21.0/npm 11.19.0): npm ci PASS; parent-inbox tests 3/3; TypeScript check PASS; web build PASS. Android Gradle/APK compilation was not run. npm audit still reports moderate findings in the existing @capacitor/cli -> xcode -> uuid dependency chain; this PR does not override uuid.
+
+## Catalog V2 auto-review sample-request fix — 2026-10-26 (unmerged work branch)
+
+- Root cause (diagnosed from production observation 2026-10-26, no production test run here): the
+  "ابدأ اختبار العينة" button used a blocking `window.confirm` (dismissible with no trace) and the
+  handler discarded the mode-endpoint response, so any HTTP 200 — including `{ok:false}` or an empty
+  body — produced the "بدأ الاختبار الآلي" success toast while the mode could stay `off` in D1.
+  The Worker pipeline itself (mode endpoint → scheduler → processing queue → consumer → Gemini →
+  D1 → counters) was verified wired at YoungTube- main HEAD; no Worker change is part of this fix.
+- Change (admin panel only): mode changes are now confirmed through the existing in-panel
+  `ConfirmModal` (explicit Cancel button, visible in the DOM); `confirmAutoReviewMode` validates
+  `result.ok === true` and `result.autoReviewMode === mode`, then re-reads
+  `GET /api/admin/catalog/status` and compares the reloaded mode; a mismatch or unconfirmed
+  response sets a persistent in-section warning/error (not toast-only). Provider gate and the
+  10-sample enforce gate are unchanged; budgets, kid feed, active generation, and classifications
+  are untouched. Modal limit fallbacks corrected to the Worker server defaults (2000 / 28800s / 1800s).
+- Tests: new `tests/catalog-auto-review-request.test.mjs` (6 tests, node:test source-pattern style);
+  admin catalog + parent-inbox tests 13/13; `npm run lint` (tsc --noEmit) PASS; `npm run build` PASS.
+  NOT tested here: live production panel, live Gemini call, live D1/queue state (no Cloudflare
+  access from this environment; production test is Phase 5, after owner merge/deploy).
+- Constraints honoured: no `enforce` enabled, no kid-feed or generation change, no secret created or
+  changed, no deploy, no main push, no workflow-file change. The budget paid-tier confirm and the
+  manual video-reject confirm are deliberately left as native dialogs (out of this fix's scope).
