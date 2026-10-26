@@ -49,6 +49,25 @@ function statusLabel(value: string): string {
   };
   return labels[value] || value || 'غير معروف';
 }
+
+function scheduleOutcomeLabel(value?: string | null): string {
+  const labels: Record<string, string> = {
+    scheduled: 'تم إرسال مهام المراجعة إلى الطابور',
+    mode_off: 'الفحص الآلي متوقف؛ لم تُجدول مهام',
+    not_configured: 'إعداد المزوّد أو السر غير متاح',
+    bindings_unavailable: 'مورد مطلوب غير متاح',
+    paused: 'الجدولة متوقفة مؤقتًا بسبب مهلة حماية',
+    budget_exhausted: 'تم بلوغ حد الاستخدام',
+    no_eligible_video: 'لم يُعثر على فيديو مؤهل للجدولة',
+    sample_limit_reached: 'تم بلوغ سقف عينة Shadow',
+    enqueue_window_full: 'نافذة الطابور ممتلئة',
+    reservation_race: 'لم يمكن حجز فيديوهات بسبب تغيير متزامن',
+    send_failed: 'فشل إرسال الرسائل إلى الطابور',
+    lock_busy: 'هناك عملية جدولة أخرى قيد التنفيذ',
+    scheduler_error: 'حدث خطأ أثناء الجدولة؛ راجع سجلات Worker',
+  };
+  return labels[String(value || '')] || (value ? String(value) : 'لم تُسجل نتيجة جدولة بعد');
+}
 const METADATA_MAX_AGE_MS = 20 * 24 * 60 * 60 * 1000;
 
 function hasFreshMetadata(item: CatalogReviewItem): boolean {
@@ -500,7 +519,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
         <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
           {[
             ['مفتاح Gemini', status.autoReview?.providerConfigured ? 'متصل' : 'غير مضاف'],
-            ['عينة الاختبار', formatCount(status.autoReview?.shadowSampleCount) + ' / 10'],
+            ['نتائج Shadow', formatCount(status.autoReview?.shadowSampleCount) + ' / ' + formatCount(status.autoReview?.shadowSampleLimit ?? 10)],
             ['فحوص اليوم', formatCount(status.autoReview?.scannedToday) + ' / ' + formatCount(status.autoReview?.dailyVideoLimit)],
             ['مدة الفحص اليوم', Math.floor(Number(status.autoReview?.scannedVideoSecondsToday || 0) / 60) + ' / ' + Math.floor(Number(status.autoReview?.dailyVideoSecondsLimit || 14400) / 60) + ' دقيقة'],
           ].map(([label, value]) => (
@@ -511,6 +530,24 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
           ))}
         </div>
         {!status.autoReview?.providerConfigured && <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">لم يتم إعداد مفتاح Gemini في Worker؛ لا يمكن بدء الاختبار حتى يُضاف كسرّ آمن في Cloudflare.</p>}
+        {status.autoReview?.lastSchedule ? (
+          <div className="mt-4 rounded-xl border border-slate-200 p-3 text-xs leading-5 dark:border-slate-800" aria-live="polite">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="font-extrabold">آخر نتيجة للجدولة (ليست نتيجة مراجعة فيديو)</p>
+              <span className="rounded-full bg-slate-100 px-2 py-1 font-bold dark:bg-slate-800">{scheduleOutcomeLabel(status.autoReview.lastSchedule.scheduleOutcome)}</span>
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
+              <div><p className="text-slate-500">فيديوهات مؤهلة</p><p className="font-bold">{status.autoReview.lastSchedule.eligibleCount === null ? 'لم يُحسب' : formatCount(status.autoReview.lastSchedule.eligibleCount)}</p></div>
+              <div><p className="text-slate-500">فيديوهات جرى جدولتها</p><p className="font-bold">{formatCount(status.autoReview.lastSchedule.scheduledCount)}</p></div>
+              <div><p className="text-slate-500">دفعات مراجعة بالطابور</p><p className="font-bold">{formatCount(status.autoReview.lastSchedule.batchesSent)}</p></div>
+              <div><p className="text-slate-500">حجز سقف العينة</p><p className="font-bold">{formatCount(status.autoReview.lastSchedule.shadowReservedCount)} / {formatCount(status.autoReview.lastSchedule.shadowSampleLimit ?? status.autoReview.shadowSampleLimit ?? 10)}</p></div>
+            </div>
+            <p className="mt-2 text-slate-500">آخر محاولة: {Number.isFinite(Date.parse(status.autoReview.lastSchedule.timestamp)) ? new Date(status.autoReview.lastSchedule.timestamp).toLocaleString('ar-EG') : 'وقت غير متاح'}.</p>
+            <p className="mt-1 text-slate-500">هذه البيانات تثبت نتيجة الجدولة فقط. لا تثبت أن Gemini فحص الفيديو أو أن نتيجة المراجعة حُفظت؛ تحقق من عداد النتائج وبيانات المراجعة المنفصلة.</p>
+          </div>
+        ) : (
+          <p className="mt-3 rounded-xl border border-slate-200 p-3 text-xs leading-5 text-slate-500 dark:border-slate-800">لا توجد نتيجة جدولة مسجلة بعد من Worker. هذا لا يعني أن Gemini نجح أو فشل؛ حالة التشغيل لم تُسجل هنا.</p>
+        )}
         <div className="mt-4 grid gap-3 rounded-xl border border-slate-200 p-3 dark:border-slate-800 sm:grid-cols-[1fr_auto] sm:items-end">
           <div>
             <label htmlFor="catalog-auto-review-hours" className="mb-1 block text-xs font-bold text-slate-600 dark:text-slate-400">حد ساعات الفيديو المفحوصة يوميًا</label>
