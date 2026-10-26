@@ -81,15 +81,6 @@ test('Actual review result completion visible in status produces a completed sta
   assert.equal(noBaseline.kind, 'mode-confirmed-awaiting-result');
   assert.notEqual(noBaseline.kind, 'result-completed');
 
-  // Without a baseline count, a non-zero count alone cannot prove a NEW result.
-  const noBaseline = deriveAutoReviewRequestOutcome({
-    ...acceptedShadow,
-    rereadMode: 'shadow',
-    rereadCount: 7,
-    previousCount: null,
-  });
-  assert.equal(noBaseline.kind, 'mode-confirmed-awaiting-result');
-  assert.notEqual(noBaseline.kind, 'result-completed');
 });
 
 test('Status re-read failure after mode-change acceptance is distinct from request failure', () => {
