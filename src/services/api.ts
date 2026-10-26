@@ -22,6 +22,20 @@ export const STORAGE_KEY_REMEMBER = 'yt_admin_remember';
 export const STORAGE_KEY_CATEGORIES = 'yt_admin_categories_cache';
 
 type UnauthorizedHandler = (message?: string) => void;
+export type ApiRequestErrorKind = 'network' | 'http';
+
+export class ApiRequestError extends Error {
+  readonly kind: ApiRequestErrorKind;
+  readonly status?: number;
+
+  constructor(message: string, kind: ApiRequestErrorKind, status?: number) {
+    super(message);
+    this.name = 'ApiRequestError';
+    this.kind = kind;
+    this.status = status;
+  }
+}
+
 let unauthorizedListener: UnauthorizedHandler | null = null;
 
 export function setUnauthorizedHandler(handler: UnauthorizedHandler | null) {
@@ -122,13 +136,13 @@ export async function apiRequest<T = unknown>(
     response = await fetch(url, { ...options, headers });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'فشل الاتصال بالخادم';
-    throw new Error(`خطأ في الشبكة: ${message} (تأكد من رابط الـ Worker وCORS)`);
+    throw new ApiRequestError(`خطأ في الشبكة: ${message} (تأكد من رابط الـ Worker وCORS)`, 'network');
   }
 
   if (response.status === 401) {
     clearAdminKey();
     unauthorizedListener?.('مفتاح المشرف (ADMIN_KEY) غير صالح.');
-    throw new Error('غير مصرح (401) — تم مسح المفتاح.');
+    throw new ApiRequestError('غير مصرح (401) — تم مسح المفتاح.', 'http', 401);
   }
 
   if (!response.ok) {
@@ -143,7 +157,7 @@ export async function apiRequest<T = unknown>(
         errorDetails = response.statusText;
       }
     }
-    throw new Error(`خطأ من الخادم (${response.status}): ${errorDetails || response.statusText}`);
+    throw new ApiRequestError(`خطأ من الخادم (${response.status}): ${errorDetails || response.statusText}`, 'http', response.status);
   }
 
   const text = await response.text();
