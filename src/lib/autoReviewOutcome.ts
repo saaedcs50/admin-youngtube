@@ -21,7 +21,7 @@ export type AutoReviewRequestOutcome =
   | { kind: 'mode-confirmed'; mode: AutoReviewMode; message: string }
   | { kind: 'mode-confirmed-awaiting-result'; mode: 'shadow'; confirmedCount: number | null; previousCount: number | null; message: string }
   | { kind: 'result-completed'; mode: 'shadow'; confirmedCount: number | null; previousCount: number | null; message: string }
-  | { kind: 're-read-failed'; mode: AutoReviewMode; message: string }
+  | { kind: 're-read-failed'; mode: AutoReviewMode; previousCount: number | null; message: string }
   | { kind: 'request-failed'; message: string }
   | { kind: 'mismatch'; mode: AutoReviewMode; actualMode: string | undefined; message: string };
 
@@ -41,14 +41,16 @@ export interface AutoReviewOutcomeInput {
   responseOk: boolean;
   /** True when the status re-read after an accepted response threw. */
   rereadFailed: boolean;
+  /** Classified exception from the HTTP client, when one occurred. */
+  requestFailureKind?: 'network' | 'http' | 'unknown';
+  /** HTTP status for a received non-success response. */
+  requestHttpStatus?: number;
   /** Mode reported by the re-read status (undefined when the re-read failed or reported none). */
   rereadMode?: string;
   /** shadowSampleCount from the re-read status; null when unavailable. */
   rereadCount?: number | null;
   /** shadowSampleCount observed before the request; null when unknown. */
   previousCount?: number | null;
-  /** True when a completed shadow result row is explicitly visible (never inferred from a mode value). */
-  completedResultVisible?: boolean;
 }
 
 function toCount(value: unknown): number | null {
@@ -60,15 +62,20 @@ export function deriveAutoReviewRequestOutcome(input: AutoReviewOutcomeInput): A
   if (!input.responseReceived || !input.responseOk) {
     return {
       kind: 'request-failed',
-      message: input.responseReceived
-        ? 'وصلت استجابة غير مؤكدة من Worker؛ لم يتم تأكيد تغيير وضع الفحص. أعد المحاولة أو راجع حالة الخدمة.'
-        : 'تعذر إرسال طلب تغيير وضع الفحص؛ لم يصل أي رد من Worker.',
+      message: input.requestFailureKind === 'network'
+        ? 'تعذر الاتصال بـ Worker أو انقطع الاتصال قبل استلام استجابة. تحقق من الشبكة ورابط Worker ثم أعد المحاولة.'
+        : input.requestFailureKind === 'http'
+          ? `ردّ Worker برمز HTTP ${input.requestHttpStatus ?? 'غير معروف'} ولم يؤكد تغيير وضع الفحص. راجع حالة الخدمة قبل إعادة المحاولة.`
+          : input.responseReceived
+            ? 'وصلت استجابة غير مؤكدة من Worker؛ لم يتم تأكيد تغيير وضع الفحص. أعد المحاولة أو راجع حالة الخدمة.'
+            : 'تعذر تأكيد طلب تغيير وضع الفحص بسبب خطأ غير مصنف؛ لا يوجد دليل كافٍ على أن Worker استلم الطلب.',
     };
   }
   if (input.rereadFailed) {
     return {
       kind: 're-read-failed',
       mode: requestedMode,
+      previousCount: toCount(input.previousCount),
       message: `تم قبول طلب تغيير الوضع إلى "${autoReviewModeLabel(requestedMode)}"، لكن إعادة قراءة الحالة فشلت، فلم يمكن التحقق النهائي من الوضع الحالي. هذا ليس فشلًا في طلب التغيير نفسه؛ استخدم تحديث حالة الفحص للمحاولة مجددًا.`,
     };
   }
@@ -92,16 +99,14 @@ export function deriveAutoReviewRequestOutcome(input: AutoReviewOutcomeInput): A
   }
   const current = toCount(input.rereadCount);
   const previous = toCount(input.previousCount);
-  if (input.completedResultVisible === true || (previous !== null && current !== null && current > previous)) {
-    const countClause = current !== null
-      ? ` عدد نتائج العينة المؤكدة الآن: ${current}${previous !== null ? ` (كان ${previous} قبل الطلب).` : '.'}`
-      : ' نتيجة مراجعة مكتملة ظاهرة في الحالة الحالية.';
+  if (previous !== null && current !== null && current > previous) {
+    const countClause = ` زاد عدد نتائج Shadow المؤكدة من ${previous} إلى ${current} منذ القراءة السابقة.`;
     return {
       kind: 'result-completed',
       mode: 'shadow',
       confirmedCount: current,
       previousCount: previous,
-      message: `ظهرت نتيجة مراجعة جديدة مؤكدة.${countClause}`,
+      message: `تم رصد زيادة في نتائج Shadow المؤكدة.${countClause}`
     };
   }
   let countClause = '';
