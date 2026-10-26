@@ -222,7 +222,14 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
       return;
     }
     if (mode === 'shadow') {
-      const confirmed = window.confirm('سيبدأ فحصًا آليًا لعينة صغيرة، دون اعتماد أو رفض الفيديوهات تلقائيًا. الحد الأقصى 24 فيديو أو 4 ساعات محتوى يوميًا، والفيديو الواحد لا يتجاوز 10 دقائق. تشغيل الاختبار؟');
+      const dailyVideoLimit = Number(autoReview?.dailyVideoLimit ?? 24);
+      const dailyVideoSecondsLimit = Number(autoReview?.dailyVideoSecondsLimit ?? 14400);
+      const maxVideoSeconds = Number(autoReview?.maxVideoSeconds ?? 600);
+      const dailyVideoHours = (dailyVideoSecondsLimit / 3600).toLocaleString('ar-EG', { maximumFractionDigits: 1 });
+      const maxVideoMinutes = Math.max(1, Math.round(maxVideoSeconds / 60));
+      const confirmed = window.confirm(
+        `سيبدأ اختبارًا آليًا لا يعتمد الفيديوهات ولا يرفضها تلقائيًا. الحدود الحالية: حتى ${formatCount(dailyVideoLimit)} فيديو يوميًا، و${dailyVideoHours} ساعة محتوى يوميًا، ومدة ${maxVideoMinutes} دقيقة كحد أقصى للفيديو الواحد. يظل التنفيذ خاضعًا لحصص Google. هل تريد تشغيل الاختبار؟`,
+      );
       if (!confirmed) return;
     } else if (mode === 'enforce') {
       if (Number(autoReview?.shadowSampleCount || 0) < 10) {
