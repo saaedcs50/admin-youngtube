@@ -56,7 +56,7 @@ test('Actual review result completion visible in status produces a completed sta
   assert.equal(byCount.kind, 'result-completed');
   assert.equal(byCount.confirmedCount, 5);
   assert.equal(byCount.previousCount, 2);
-  assert.match(byCount.message, /ظهرت نتيجة مراجعة جديدة مؤكدة/);
+  assert.match(byCount.message, /تم رصد زيادة في نتائج Shadow المؤكدة/);
   assert.match(byCount.message, /5/);
 
   // A count that is unchanged does not establish that a new result appeared,
