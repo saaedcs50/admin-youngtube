@@ -4,10 +4,12 @@ import {
   RefreshCw, ShieldCheck, UploadCloud, XCircle,
 } from 'lucide-react';
 import {
-  CatalogReviewItem, CatalogStatusResponse, fetchCatalogReviewQueue, fetchCatalogStatus,
+  ApiRequestError, CatalogReviewItem, CatalogStatusResponse, fetchCatalogReviewQueue, fetchCatalogStatus,
   fetchCategories, publishCatalogGeneration, reviewCatalogVideo, startCatalogRebuild, setCatalogAutoReviewMode, setCatalogAutoReviewBudget,
 } from '../services/api';
 import { CategoryItem } from '../types';
+import { ConfirmModal } from './ConfirmModal';
+import { deriveAutoReviewRequestOutcome, type AutoReviewRequestOutcome } from '../lib/autoReviewOutcome';
 
 interface CatalogViewProps {
   onNotify: (type: 'success' | 'error' | 'info' | 'warning', title: string, desc?: string) => void;
@@ -46,6 +48,25 @@ function statusLabel(value: string): string {
     UNAVAILABLE: 'غير متاح من YouTube',
   };
   return labels[value] || value || 'غير معروف';
+}
+
+function scheduleOutcomeLabel(value?: string | null): string {
+  const labels: Record<string, string> = {
+    scheduled: 'تم إرسال مهام المراجعة إلى الطابور',
+    mode_off: 'الفحص الآلي متوقف؛ لم تُجدول مهام',
+    not_configured: 'إعداد المزوّد أو السر غير متاح',
+    bindings_unavailable: 'مورد مطلوب غير متاح',
+    paused: 'الجدولة متوقفة مؤقتًا بسبب مهلة حماية',
+    budget_exhausted: 'تم بلوغ حد الاستخدام',
+    no_eligible_video: 'لم يُعثر على فيديو مؤهل للجدولة',
+    sample_limit_reached: 'تم بلوغ سقف عينة Shadow',
+    enqueue_window_full: 'نافذة الطابور ممتلئة',
+    reservation_race: 'لم يمكن حجز فيديوهات بسبب تغيير متزامن',
+    send_failed: 'فشل إرسال الرسائل إلى الطابور',
+    lock_busy: 'هناك عملية جدولة أخرى قيد التنفيذ',
+    scheduler_error: 'حدث خطأ أثناء الجدولة؛ راجع سجلات Worker',
+  };
+  return labels[String(value || '')] || (value ? String(value) : 'لم تُسجل نتيجة جدولة بعد');
 }
 const METADATA_MAX_AGE_MS = 20 * 24 * 60 * 60 * 1000;
 
@@ -109,6 +130,10 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
   const [autoReviewSaving, setAutoReviewSaving] = useState(false);
   const [autoReviewBudgetSaving, setAutoReviewBudgetSaving] = useState(false);
   const [autoReviewDailyHours, setAutoReviewDailyHours] = useState<number>(8);
+  const [pendingAutoReviewMode, setPendingAutoReviewMode] = useState<'off' | 'shadow' | 'enforce' | null>(null);
+  const [autoReviewRequest, setAutoReviewRequest] = useState<AutoReviewRequestOutcome | null>(null);
+  const [autoReviewRefreshing, setAutoReviewRefreshing] = useState(false);
+  const [autoReviewRefreshError, setAutoReviewRefreshError] = useState<string | null>(null);
   const [busyVideo, setBusyVideo] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<Record<string, string>>({});
   const [safetyReviewed, setSafetyReviewed] = useState<Record<string, boolean>>({});
@@ -215,42 +240,164 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
     }
   };
 
-  const changeAutoReviewMode = async (mode: 'off' | 'shadow' | 'enforce') => {
+  // Mode changes are confirmed through the in-panel ConfirmModal, not a native dialog:
+  // a native dialog can be dismissed silently by the browser/automation with no trace,
+  // which previously left the panel showing a "success" toast while the mode never changed.
+  // requestAutoReviewMode only opens the modal; confirmAutoReviewMode performs the request,
+  // validates the response, and verifies the reloaded mode before reporting anything.
+  const requestAutoReviewMode = (mode: 'off' | 'shadow' | 'enforce') => {
     const autoReview = status?.autoReview;
     if (mode !== 'off' && autoReview?.providerConfigured !== true) {
       onNotify('warning', 'مفتاح الفحص غير متاح', 'يجب إضافة GEMINI_API_KEY كسرّ إلى Worker أولًا؛ لم يتم تشغيل أي فحص.');
       return;
     }
-    if (mode === 'shadow') {
-      const dailyVideoLimit = Number(autoReview?.dailyVideoLimit ?? 24);
-      const dailyVideoSecondsLimit = Number(autoReview?.dailyVideoSecondsLimit ?? 14400);
-      const maxVideoSeconds = Number(autoReview?.maxVideoSeconds ?? 600);
+    if (mode === 'enforce' && Number(autoReview?.shadowSampleCount || 0) < 10) {
+      onNotify('warning', 'العينة التجريبية غير كافية', 'يلزم الحصول على 10 نتائج تجريبية على الأقل قبل تفعيل الاعتماد الآلي.');
+      return;
+    }
+    setPendingAutoReviewMode(mode);
+  };
+
+  const pendingAutoReviewTitle = pendingAutoReviewMode === 'shadow'
+    ? 'بدء اختبار العينة'
+    : pendingAutoReviewMode === 'enforce'
+      ? 'تفعيل الاعتماد الآلي'
+      : 'إيقاف الفحص الآلي';
+
+  const pendingAutoReviewMessage = (() => {
+    if (pendingAutoReviewMode === 'shadow') {
+      const dailyVideoLimit = Number(status?.autoReview?.dailyVideoLimit ?? 2000);
+      const dailyVideoSecondsLimit = Number(status?.autoReview?.dailyVideoSecondsLimit ?? 28800);
+      const maxVideoSeconds = Number(status?.autoReview?.maxVideoSeconds ?? 1800);
       const dailyVideoHours = (dailyVideoSecondsLimit / 3600).toLocaleString('ar-EG', { maximumFractionDigits: 1 });
       const maxVideoMinutes = Math.max(1, Math.round(maxVideoSeconds / 60));
-      const confirmed = window.confirm(
-        `سيبدأ اختبارًا آليًا لا يعتمد الفيديوهات ولا يرفضها تلقائيًا. الحدود الحالية: حتى ${formatCount(dailyVideoLimit)} فيديو يوميًا، و${dailyVideoHours} ساعة محتوى يوميًا، ومدة ${maxVideoMinutes} دقيقة كحد أقصى للفيديو الواحد. يظل التنفيذ خاضعًا لحصص Google. هل تريد تشغيل الاختبار؟`,
-      );
-      if (!confirmed) return;
-    } else if (mode === 'enforce') {
-      if (Number(autoReview?.shadowSampleCount || 0) < 10) {
-        onNotify('warning', 'العينة التجريبية غير كافية', 'يلزم الحصول على 10 نتائج تجريبية على الأقل قبل تفعيل الاعتماد الآلي.');
+      return `سيبدأ اختبارًا آليًا لا يعتمد الفيديوهات ولا يرفضها تلقائيًا. الحدود الحالية: حتى ${formatCount(dailyVideoLimit)} فيديو يوميًا، و${dailyVideoHours} ساعة محتوى يوميًا، ومدة ${maxVideoMinutes} دقيقة كحد أقصى للفيديو الواحد. يظل التنفيذ خاضعًا لحصص Google. هل تريد تشغيل الاختبار؟`;
+    }
+    if (pendingAutoReviewMode === 'enforce') {
+      return 'لا تفعّل هذا الخيار إلا بعد فحص نتائج 10 فيديوهات على الأقل من العينة التجريبية. ستُعتمد تلقائيًا الحالات عالية الثقة في نطاق محدود فقط؛ الحالات غير الواضحة ستظل خارج الفيد. هل راجعت العينة وتريد المتابعة؟';
+    }
+    if (pendingAutoReviewMode === 'off') {
+      return 'إيقاف جدولة الفحص الآلي الجديد؟ ستظل الفيديوهات المعتمدة سابقًا كما هي، ولن تُحذف نتائج الفحص.';
+    }
+    return '';
+  })();
+
+  // The outcome of a mode-change request is derived, never asserted from the
+  // mode value alone. Three facts stay separate: (a) the mode changed
+  // (validated response + re-read showing the requested mode), (b) a review
+  // execution started (NOT proven by (a) — the mode endpoint returns no
+  // enqueue/eligible/scheduler information), (c) an actual result completed
+  // (proven only by shadowSampleCount increasing since before the request).
+  // The persistent in-section outcome below is the single record of the last
+  // request; the section badge above always shows the live mode.
+  const confirmAutoReviewMode = async () => {
+    const mode = pendingAutoReviewMode;
+    if (!mode) return;
+    const previousCount = typeof status?.autoReview?.shadowSampleCount === 'number' ? status.autoReview.shadowSampleCount : null;
+    setAutoReviewSaving(true);
+    setAutoReviewRefreshError(null);
+    try {
+      let responseReceived = false;
+      let responseOk = false;
+      let requestFailureKind: 'network' | 'http' | 'unknown' = 'unknown';
+      let requestHttpStatus: number | undefined;
+      try {
+        const result = await setCatalogAutoReviewMode({ mode, ...(mode === 'enforce' ? { sampleAuditConfirmed: true } : {}) });
+        responseReceived = true;
+        responseOk = result?.ok === true && result?.autoReviewMode === mode;
+      } catch (error) {
+        if (error instanceof ApiRequestError) {
+          requestFailureKind = error.kind;
+          requestHttpStatus = error.status;
+          responseReceived = error.kind === 'http';
+        } else {
+          requestFailureKind = 'unknown';
+          responseReceived = false;
+        }
+      }
+      if (!responseReceived || !responseOk) {
+        const outcome = deriveAutoReviewRequestOutcome({ requestedMode: mode, responseReceived, responseOk, rereadFailed: false, previousCount, requestFailureKind, requestHttpStatus });
+        setAutoReviewRequest(outcome);
+        onNotify('error', 'تعذر تغيير وضع الفحص', outcome.message);
         return;
       }
-      const confirmed = window.confirm('لا تفعّل هذا الخيار إلا بعد فحص نتائج 10 فيديوهات على الأقل من العينة التجريبية. ستُعتمد تلقائيًا الحالات عالية الثقة في نطاق محدود فقط؛ الحالات غير الواضحة ستظل خارج الفيد. هل راجعت العينة وتريد المتابعة؟');
-      if (!confirmed) return;
-    } else {
-      const confirmed = window.confirm('إيقاف جدولة الفحص الآلي الجديد؟ ستظل الفيديوهات المعتمدة سابقًا كما هي، ولن تُحذف نتائج الفحص.');
-      if (!confirmed) return;
-    }
-    setAutoReviewSaving(true);
-    try {
-      await setCatalogAutoReviewMode({ mode, ...(mode === 'enforce' ? { sampleAuditConfirmed: true } : {}) });
-      onNotify('success', mode === 'off' ? 'تم إيقاف الفحص الآلي' : mode === 'shadow' ? 'بدأ الاختبار الآلي' : 'تم تفعيل مسار الاعتماد الآلي', mode === 'shadow' ? 'الاختبار لا يعتمد أي فيديو. راجع نتائج العينة قبل التفعيل.' : mode === 'enforce' ? 'الاعتماد يقتصر على الحالات التي تجتاز كل البوابات؛ غير الواضح يبقى خارج الفيد.' : 'ستظل الموافقات السابقة محفوظة.');
+      let rereadFailed = false;
+      let rereadMode: string | undefined;
+      let rereadCount: number | null = null;
+      try {
+        const nextStatus = await fetchCatalogStatus();
+        rereadMode = nextStatus.autoReview?.mode;
+        rereadCount = typeof nextStatus.autoReview?.shadowSampleCount === 'number' ? nextStatus.autoReview.shadowSampleCount : null;
+      } catch {
+        rereadFailed = true;
+      }
+      const outcome = deriveAutoReviewRequestOutcome({ requestedMode: mode, responseReceived: true, responseOk: true, rereadFailed, rereadMode, rereadCount, previousCount });
+      setAutoReviewRequest(outcome);
+      if (outcome.kind === 'result-completed') {
+        onNotify('success', 'ظهرت نتيجة مراجعة جديدة', outcome.message);
+      } else if (outcome.kind === 'mode-confirmed-awaiting-result') {
+        onNotify('success', 'تم تأكيد وضع Shadow', 'جارٍ التحقق من نتائج المراجعة؛ لم تُثبت نتيجة جديدة بعد.');
+      } else if (outcome.kind === 'mode-confirmed') {
+        onNotify('success', mode === 'off' ? 'تم إيقاف الفحص الآلي' : 'تم تفعيل مسار الاعتماد الآلي', outcome.message);
+      } else if (outcome.kind === 'mismatch') {
+        onNotify('warning', 'وضع الفحص لم يتغير', outcome.message);
+      } else if (outcome.kind === 're-read-failed') {
+        onNotify('warning', 'تعذر التحقق النهائي من وضع الفحص', outcome.message);
+      } else {
+        onNotify('error', 'تعذر تغيير وضع الفحص', outcome.message);
+      }
       await reload(true);
     } catch (error) {
-      onNotify('error', 'تعذر تغيير وضع الفحص', error instanceof Error ? error.message : 'خطأ غير معروف');
+      // reload(true) never throws (it catches internally); this is a safety net
+      // for unexpected failures outside the request/re-read steps.
+      const outcome: AutoReviewRequestOutcome = { kind: 'request-failed', message: `تعذر إتمام طلب تغيير وضع الفحص: ${error instanceof Error ? error.message : 'خطأ غير معروف'}` };
+      setAutoReviewRequest(outcome);
+      onNotify('error', 'تعذر تغيير وضع الفحص', outcome.message);
     } finally {
       setAutoReviewSaving(false);
+      setPendingAutoReviewMode(null);
+    }
+  };
+
+  // Manual status refresh for the auto-review outcome: re-fetches catalog status
+  // ONLY — no mode POST, no sample run. Its single job is to detect a newly
+  // completed result after a mode-confirmed-awaiting-result outcome: if the
+  // confirmed count rose above the pre-request count (and the mode is still
+  // shadow), the outcome upgrades to result-completed. Every other outcome is
+  // left untouched (the outcome block records the last request; the section
+  // badge shows the live mode), and a refresh failure is shown persistently
+  // without clearing the prior outcome.
+  const refreshAutoReviewStatus = async () => {
+    setAutoReviewRefreshing(true);
+    setAutoReviewRefreshError(null);
+    try {
+      const nextStatus = await fetchCatalogStatus();
+      setStatus(nextStatus);
+      const nextCount = typeof nextStatus.autoReview?.shadowSampleCount === 'number' ? nextStatus.autoReview.shadowSampleCount : null;
+      setAutoReviewRequest((previous) => {
+        if (!previous) return previous;
+        if (previous.kind === 're-read-failed') {
+          return deriveAutoReviewRequestOutcome({
+            requestedMode: previous.mode,
+            responseReceived: true,
+            responseOk: true,
+            rereadFailed: false,
+            rereadMode: nextStatus.autoReview?.mode,
+            rereadCount: nextCount,
+            previousCount: previous.previousCount,
+          });
+        }
+        if (previous.kind !== 'mode-confirmed-awaiting-result') return previous;
+        if (nextStatus.autoReview?.mode !== 'shadow') return previous;
+        if (nextCount !== null && previous.previousCount !== null && nextCount > previous.previousCount) {
+          return deriveAutoReviewRequestOutcome({ requestedMode: 'shadow', responseReceived: true, responseOk: true, rereadFailed: false, rereadMode: 'shadow', rereadCount: nextCount, previousCount: previous.previousCount });
+        }
+        return previous;
+      });
+    } catch (error) {
+      setAutoReviewRefreshError(`تعذر تحديث حالة الفحص: ${error instanceof Error ? error.message : 'خطأ غير معروف'} — لم يتغير آخر طلب مسجل، ويمكن إعادة المحاولة.`);
+    } finally {
+      setAutoReviewRefreshing(false);
     }
   };
 
@@ -372,7 +519,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
         <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
           {[
             ['مفتاح Gemini', status.autoReview?.providerConfigured ? 'متصل' : 'غير مضاف'],
-            ['عينة الاختبار', formatCount(status.autoReview?.shadowSampleCount) + ' / 10'],
+            ['نتائج Shadow', formatCount(status.autoReview?.shadowSampleCount) + ' / ' + formatCount(status.autoReview?.shadowSampleLimit ?? 10)],
             ['فحوص اليوم', formatCount(status.autoReview?.scannedToday) + ' / ' + formatCount(status.autoReview?.dailyVideoLimit)],
             ['مدة الفحص اليوم', Math.floor(Number(status.autoReview?.scannedVideoSecondsToday || 0) / 60) + ' / ' + Math.floor(Number(status.autoReview?.dailyVideoSecondsLimit || 14400) / 60) + ' دقيقة'],
           ].map(([label, value]) => (
@@ -383,6 +530,24 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
           ))}
         </div>
         {!status.autoReview?.providerConfigured && <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">لم يتم إعداد مفتاح Gemini في Worker؛ لا يمكن بدء الاختبار حتى يُضاف كسرّ آمن في Cloudflare.</p>}
+        {status.autoReview?.lastSchedule ? (
+          <div className="mt-4 rounded-xl border border-slate-200 p-3 text-xs leading-5 dark:border-slate-800" aria-live="polite">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="font-extrabold">آخر نتيجة للجدولة (ليست نتيجة مراجعة فيديو)</p>
+              <span className="rounded-full bg-slate-100 px-2 py-1 font-bold dark:bg-slate-800">{scheduleOutcomeLabel(status.autoReview.lastSchedule.scheduleOutcome)}</span>
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
+              <div><p className="text-slate-500">فيديوهات مؤهلة</p><p className="font-bold">{status.autoReview.lastSchedule.eligibleCount === null ? 'لم يُحسب' : formatCount(status.autoReview.lastSchedule.eligibleCount)}</p></div>
+              <div><p className="text-slate-500">فيديوهات جرى جدولتها</p><p className="font-bold">{formatCount(status.autoReview.lastSchedule.scheduledCount)}</p></div>
+              <div><p className="text-slate-500">دفعات مراجعة بالطابور</p><p className="font-bold">{formatCount(status.autoReview.lastSchedule.batchesSent)}</p></div>
+              <div><p className="text-slate-500">حجز سقف العينة</p><p className="font-bold">{formatCount(status.autoReview.lastSchedule.shadowReservedCount)} / {formatCount(status.autoReview.lastSchedule.shadowSampleLimit ?? status.autoReview.shadowSampleLimit ?? 10)}</p></div>
+            </div>
+            <p className="mt-2 text-slate-500">آخر محاولة: {Number.isFinite(Date.parse(status.autoReview.lastSchedule.timestamp)) ? new Date(status.autoReview.lastSchedule.timestamp).toLocaleString('ar-EG') : 'وقت غير متاح'}.</p>
+            <p className="mt-1 text-slate-500">هذه البيانات تثبت نتيجة الجدولة فقط. لا تثبت أن Gemini فحص الفيديو أو أن نتيجة المراجعة حُفظت؛ تحقق من عداد النتائج وبيانات المراجعة المنفصلة.</p>
+          </div>
+        ) : (
+          <p className="mt-3 rounded-xl border border-slate-200 p-3 text-xs leading-5 text-slate-500 dark:border-slate-800">لا توجد نتيجة جدولة مسجلة بعد من Worker. هذا لا يعني أن Gemini نجح أو فشل؛ حالة التشغيل لم تُسجل هنا.</p>
+        )}
         <div className="mt-4 grid gap-3 rounded-xl border border-slate-200 p-3 dark:border-slate-800 sm:grid-cols-[1fr_auto] sm:items-end">
           <div>
             <label htmlFor="catalog-auto-review-hours" className="mb-1 block text-xs font-bold text-slate-600 dark:text-slate-400">حد ساعات الفيديو المفحوصة يوميًا</label>
@@ -398,16 +563,42 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
           </button>
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
-          <button onClick={() => void changeAutoReviewMode('shadow')} disabled={autoReviewSaving || !status.autoReview?.providerConfigured || status.autoReview?.mode === 'shadow' || status.autoReview?.mode === 'enforce'} className="rounded-xl bg-sky-600 px-4 py-2 text-sm font-bold text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-40">
+          <button onClick={() => requestAutoReviewMode('shadow')} disabled={autoReviewSaving || !status.autoReview?.providerConfigured || status.autoReview?.mode === 'shadow' || status.autoReview?.mode === 'enforce'} className="rounded-xl bg-sky-600 px-4 py-2 text-sm font-bold text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-40">
             {autoReviewSaving ? 'جار الحفظ…' : 'ابدأ اختبار العينة'}
           </button>
-          <button onClick={() => void changeAutoReviewMode('enforce')} disabled={autoReviewSaving || !status.autoReview?.providerConfigured || Number(status.autoReview?.shadowSampleCount || 0) < 10 || status.autoReview?.mode === 'enforce'} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40">
+          <button onClick={() => requestAutoReviewMode('enforce')} disabled={autoReviewSaving || !status.autoReview?.providerConfigured || Number(status.autoReview?.shadowSampleCount || 0) < 10 || status.autoReview?.mode === 'enforce'} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40">
             تفعيل الاعتماد الآلي
           </button>
-          <button onClick={() => void changeAutoReviewMode('off')} disabled={autoReviewSaving || status.autoReview?.mode === 'off'} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
+          <button onClick={() => requestAutoReviewMode('off')} disabled={autoReviewSaving || status.autoReview?.mode === 'off'} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
             إيقاف الفحص الآلي
           </button>
         </div>
+        {autoReviewRequest && (
+          <p className={`mt-3 rounded-xl border p-3 text-xs leading-5 ${autoReviewRequest.kind === 'mode-confirmed' || autoReviewRequest.kind === 'result-completed' ? 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100' : autoReviewRequest.kind === 'mode-confirmed-awaiting-result' ? 'border-sky-200 bg-sky-50 text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-100' : autoReviewRequest.kind === 'mismatch' || autoReviewRequest.kind === 're-read-failed' ? 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100' : 'border-red-200 bg-red-50 text-red-900 dark:border-red-900 dark:bg-red-950/30 dark:text-red-100'}`}>
+            {autoReviewRequest.message}
+          </p>
+        )}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button onClick={() => void refreshAutoReviewStatus()} disabled={autoReviewRefreshing || autoReviewSaving} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
+            {autoReviewRefreshing ? 'جار تحديث حالة الفحص…' : 'تحديث حالة الفحص (دون إعادة تشغيل)'}
+          </button>
+          <span className="text-xs text-slate-500">يعيد قراءة الحالة فقط؛ لا يرسل طلب تغيير وضع ولا يبدأ فحصًا جديدًا.</span>
+        </div>
+        {autoReviewRefreshError && (
+          <p className="mt-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs leading-5 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
+            {autoReviewRefreshError}
+          </p>
+        )}
+        <ConfirmModal
+          isOpen={pendingAutoReviewMode !== null}
+          title={pendingAutoReviewTitle}
+          message={pendingAutoReviewMessage}
+          confirmLabel={pendingAutoReviewMode === 'shadow' ? 'بدء الاختبار' : pendingAutoReviewMode === 'enforce' ? 'تفعيل الاعتماد' : 'إيقاف الفحص'}
+          cancelLabel="إلغاء"
+          isLoading={autoReviewSaving}
+          onConfirm={() => void confirmAutoReviewMode()}
+          onCancel={() => setPendingAutoReviewMode(null)}
+        />
         <p className="mt-3 text-xs leading-5 text-slate-500">حدود التشغيل: حتى 2,000 فيديو يوميًا على دفعات من 10، وبحد محتوى افتراضي 8 ساعات يوميًا؛ يمكن اختيار 24 أو 72 ساعة لمشروع Gemini مدفوع بعد تأكيد الميزانية. أقصى مدة للفيديو في هذا المسار 30 دقيقة. الفيديوهات غير المتاحة أو غير الواضحة لا تُعتمد آليًا. بسبب أخذ عينات من الفيديو بواسطة النموذج، لا يُعد هذا ضمانًا كاملًا للسلامة.</p>
       </section>
 
