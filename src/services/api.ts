@@ -836,6 +836,32 @@ export async function saveSupportPay(payload: SupportPayData): Promise<{ ok?: bo
 
 
 
+export type CatalogAutoReviewScheduleOutcome =
+  | 'scheduled'
+  | 'mode_off'
+  | 'not_configured'
+  | 'bindings_unavailable'
+  | 'paused'
+  | 'budget_exhausted'
+  | 'no_eligible_video'
+  | 'sample_limit_reached'
+  | 'enqueue_window_full'
+  | 'reservation_race'
+  | 'send_failed'
+  | 'lock_busy'
+  | 'scheduler_error'
+  | string;
+
+export interface CatalogAutoReviewScheduleStatus {
+  scheduleOutcome: CatalogAutoReviewScheduleOutcome;
+  timestamp: string;
+  eligibleCount: number | null;
+  scheduledCount: number;
+  batchesSent: number;
+  shadowSampleLimit: number | null;
+  shadowReservedCount: number | null;
+}
+
 export interface CatalogStatusResponse {
   ok: boolean;
   schemaVersion: number;
@@ -855,6 +881,9 @@ export interface CatalogStatusResponse {
     scannedToday: number;
     scannedVideoSecondsToday: number;
     shadowSampleCount: number;
+    shadowSampleLimit?: number;
+    shadowReservedCount?: number;
+    lastSchedule?: CatalogAutoReviewScheduleStatus | null;
   };
   bindings: { kv: boolean; d1: boolean; discoveryQueue: boolean; processingQueue: boolean };
   counts: {
@@ -907,6 +936,7 @@ export async function setCatalogAutoReviewMode(input: {
   dailyVideoLimit: number;
   dailyVideoSecondsLimit: number;
   sampleAuditRequired: boolean;
+  schedule?: CatalogAutoReviewScheduleStatus;
 }> {
   return apiRequest('/api/admin/catalog/auto-review-mode', {
     method: 'POST',
