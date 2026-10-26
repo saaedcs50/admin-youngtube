@@ -11,6 +11,15 @@ import { test } from 'node:test';
 // body — produced the "بدأ الاختبار الآلي" success toast. These tests pin the replacement
 // behavior: in-panel confirmation, response validation, and post-reload mode verification
 // with a persistent in-section outcome (not toast-only).
+//
+// Follow-up (this session): the prior fix still conflated mode confirmation with
+// execution start — its success toast claimed the test had started merely because the
+// mode changed. The outcome is now derived by a pure function
+// (src/lib/autoReviewOutcome.ts, unit-tested in catalog-auto-review-outcome.test.mjs)
+// that separates mode-confirmed, awaiting-result, result-completed, re-read-failed,
+// request-failed, and mismatch. The pattern tests below remain only as supplementary
+// guards (modal usage, single call site, gates, fallbacks, refresh control); the
+// derivation semantics themselves are covered by logic tests, not regex.
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
 
@@ -39,20 +48,35 @@ test('Auto-review mode changes are confirmed through the in-panel modal, not win
   assert.doesNotMatch(view, /changeAutoReviewMode/);
 });
 
-test('Auto-review mode change validates the API response before reporting success', () => {
+test('Auto-review mode change derives its outcome from validated response and re-read, never from the mode value alone', () => {
   const view = read('src/components/CatalogView.tsx');
   const confirmStart = view.indexOf('const confirmAutoReviewMode');
   const decideStart = view.indexOf('const decide =');
   assert.ok(confirmStart >= 0, 'confirmAutoReviewMode should exist');
   const body = view.slice(confirmStart, decideStart);
 
+  // The single mode-endpoint call site validates ok + autoReviewMode and hands
+  // both facts to the pure derivation function; the derivation semantics are
+  // covered by logic tests in catalog-auto-review-outcome.test.mjs.
   assert.match(body, /const result = await setCatalogAutoReviewMode\(/);
-  assert.match(body, /result\?\.ok !== true \|\| result\?\.autoReviewMode !== mode/);
-  assert.match(body, /kind: 'failed'/);
-  // A rejected response must not fall through to the success toast.
-  const failedPos = body.indexOf("kind: 'failed'");
-  const successPos = body.indexOf("onNotify('success'");
-  assert.ok(failedPos >= 0 && successPos > failedPos, 'failure state must be set before any success path');
+  assert.match(body, /responseOk = result\?\.ok === true && result\?\.autoReviewMode === mode/);
+  assert.match(body, /deriveAutoReviewRequestOutcome\(\{/);
+  assert.match(body, /responseReceived/);
+  assert.match(body, /rereadFailed/);
+  assert.match(body, /previousCount/);
+
+  // The misleading toast is gone: mode confirmation must never be presented as
+  // a started test, anywhere in the view.
+  assert.doesNotMatch(view, /بدأ الاختبار الآلي/);
+
+  // Success toasts are kind-guarded: a completed result gets its own toast,
+  // a confirmed-but-awaiting mode gets the precise Shadow-confirmation toast,
+  // and no other kind reaches a success toast.
+  assert.match(body, /outcome\.kind === 'result-completed'/);
+  assert.match(body, /onNotify\('success', 'ظهرت نتيجة مراجعة جديدة'/);
+  assert.match(body, /outcome\.kind === 'mode-confirmed-awaiting-result'/);
+  assert.match(body, /onNotify\('success', 'تم تأكيد وضع Shadow'/);
+  assert.match(body, /جارٍ التحقق من نتائج المراجعة؛ لم تُثبت نتيجة جديدة بعد/);
 });
 
 test('Auto-review mode change verifies the reloaded mode and keeps the outcome persistent', () => {
@@ -61,19 +85,36 @@ test('Auto-review mode change verifies the reloaded mode and keeps the outcome p
   const decideStart = view.indexOf('const decide =');
   const body = view.slice(confirmStart, decideStart);
 
-  // The fresh status is read directly (not from async component state) and compared
-  // against the requested mode; a mismatch is a persistent warning, not a silent toast.
+  // The fresh status is read directly (not from async component state) and its
+  // mode and count feed the derivation; a mismatch is a persistent warning,
+  // and a re-read failure is a distinct persistent state, not a request failure.
   assert.match(body, /const nextStatus = await fetchCatalogStatus\(\)/);
-  assert.match(body, /if \(nextStatus\.autoReview\?\.mode !== mode\)/);
-  assert.match(body, /kind: 'mismatch'/);
-  assert.match(body, /kind: 'confirmed'/);
+  assert.match(body, /rereadMode = nextStatus\.autoReview\?\.mode/);
+  assert.match(body, /rereadCount = typeof nextStatus\.autoReview\?\.shadowSampleCount/);
+  assert.match(body, /outcome\.kind === 'mismatch'/);
   assert.match(body, /onNotify\('warning', 'وضع الفحص لم يتغير'/);
+  assert.match(body, /outcome\.kind === 're-read-failed'/);
+  assert.match(body, /onNotify\('warning', 'تعذر التحقق النهائي من وضع الفحص'/);
 
   // The outcome lives in section state rendered next to the buttons, so it survives
-  // the 4500ms toast lifetime.
+  // the 4500ms toast lifetime, with one coherent kind set (no parallel systems).
   assert.match(view, /const \[autoReviewRequest, setAutoReviewRequest\]/);
   assert.match(view, /\{autoReviewRequest && \(/);
   assert.match(view, /autoReviewRequest\.message/);
+  assert.match(view, /mode-confirmed-awaiting-result/);
+  assert.match(view, /result-completed/);
+
+  // Manual status refresh: re-fetches status only — no mode POST, no sample run —
+  // and only upgrades an awaiting outcome when the confirmed count rises.
+  const refreshStart = view.indexOf('const refreshAutoReviewStatus');
+  assert.ok(refreshStart >= 0, 'refreshAutoReviewStatus should exist');
+  const refreshBody = view.slice(refreshStart, decideStart);
+  assert.match(refreshBody, /const nextStatus = await fetchCatalogStatus\(\)/);
+  assert.doesNotMatch(refreshBody, /setCatalogAutoReviewMode\(/);
+  assert.match(refreshBody, /previous\.kind !== 'mode-confirmed-awaiting-result'/);
+  assert.match(refreshBody, /nextCount > previous\.previousCount/);
+  assert.match(view, /تحديث حالة الفحص \(دون إعادة تشغيل\)/);
+  assert.match(view, /لا يرسل طلب تغيير وضع ولا يبدأ فحصًا جديدًا/);
 });
 
 test('Auto-review mode gates are preserved: provider check and the 10-sample enforce gate', () => {

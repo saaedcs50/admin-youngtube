@@ -9,6 +9,7 @@ import {
 } from '../services/api';
 import { CategoryItem } from '../types';
 import { ConfirmModal } from './ConfirmModal';
+import { deriveAutoReviewRequestOutcome, type AutoReviewRequestOutcome } from '../lib/autoReviewOutcome';
 
 interface CatalogViewProps {
   onNotify: (type: 'success' | 'error' | 'info' | 'warning', title: string, desc?: string) => void;
@@ -111,7 +112,9 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
   const [autoReviewBudgetSaving, setAutoReviewBudgetSaving] = useState(false);
   const [autoReviewDailyHours, setAutoReviewDailyHours] = useState<number>(8);
   const [pendingAutoReviewMode, setPendingAutoReviewMode] = useState<'off' | 'shadow' | 'enforce' | null>(null);
-  const [autoReviewRequest, setAutoReviewRequest] = useState<{ kind: 'confirmed' | 'mismatch' | 'failed'; message: string } | null>(null);
+  const [autoReviewRequest, setAutoReviewRequest] = useState<AutoReviewRequestOutcome | null>(null);
+  const [autoReviewRefreshing, setAutoReviewRefreshing] = useState(false);
+  const [autoReviewRefreshError, setAutoReviewRefreshError] = useState<string | null>(null);
   const [busyVideo, setBusyVideo] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<Record<string, string>>({});
   const [safetyReviewed, setSafetyReviewed] = useState<Record<string, boolean>>({});
@@ -222,7 +225,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
   // a native dialog can be dismissed silently by the browser/automation with no trace,
   // which previously left the panel showing a "success" toast while the mode never changed.
   // requestAutoReviewMode only opens the modal; confirmAutoReviewMode performs the request,
-  // validates the response, and verifies the reloaded mode before reporting success.
+  // validates the response, and verifies the reloaded mode before reporting anything.
   const requestAutoReviewMode = (mode: 'off' | 'shadow' | 'enforce') => {
     const autoReview = status?.autoReview;
     if (mode !== 'off' && autoReview?.providerConfigured !== true) {
@@ -260,54 +263,101 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
     return '';
   })();
 
-  const autoReviewModeLabel = (mode?: string) => (mode === 'enforce'
-    ? 'الاعتماد الآلي مفعّل'
-    : mode === 'shadow'
-      ? 'اختبار بلا اعتماد'
-      : 'الفحص الآلي متوقف');
-
+  // The outcome of a mode-change request is derived, never asserted from the
+  // mode value alone. Three facts stay separate: (a) the mode changed
+  // (validated response + re-read showing the requested mode), (b) a review
+  // execution started (NOT proven by (a) — the mode endpoint returns no
+  // enqueue/eligible/scheduler information), (c) an actual result completed
+  // (proven only by shadowSampleCount increasing since before the request).
+  // The persistent in-section outcome below is the single record of the last
+  // request; the section badge above always shows the live mode.
   const confirmAutoReviewMode = async () => {
     const mode = pendingAutoReviewMode;
     if (!mode) return;
+    const previousCount = typeof status?.autoReview?.shadowSampleCount === 'number' ? status.autoReview.shadowSampleCount : null;
     setAutoReviewSaving(true);
+    setAutoReviewRefreshError(null);
     try {
-      const result = await setCatalogAutoReviewMode({ mode, ...(mode === 'enforce' ? { sampleAuditConfirmed: true } : {}) });
-      if (result?.ok !== true || result?.autoReviewMode !== mode) {
-        setAutoReviewRequest({
-          kind: 'failed',
-          message: 'وصلت استجابة غير مؤكدة من Worker؛ لم يتم تأكيد تغيير وضع الفحص. أعد المحاولة أو راجع حالة الخدمة.',
-        });
-        onNotify('error', 'تعذر تأكيد تغيير وضع الفحص', 'استجابة Worker لم تؤكد الوضع المطلوب.');
+      let responseReceived = false;
+      let responseOk = false;
+      try {
+        const result = await setCatalogAutoReviewMode({ mode, ...(mode === 'enforce' ? { sampleAuditConfirmed: true } : {}) });
+        responseReceived = true;
+        responseOk = result?.ok === true && result?.autoReviewMode === mode;
+      } catch {
+        responseReceived = false;
+      }
+      if (!responseReceived || !responseOk) {
+        const outcome = deriveAutoReviewRequestOutcome({ requestedMode: mode, responseReceived, responseOk, rereadFailed: false, previousCount });
+        setAutoReviewRequest(outcome);
+        onNotify('error', 'تعذر تغيير وضع الفحص', outcome.message);
         return;
       }
-      const nextStatus = await fetchCatalogStatus();
-      if (nextStatus.autoReview?.mode !== mode) {
-        setAutoReviewRequest({
-          kind: 'mismatch',
-          message: `تم إرسال الطلب وقبله Worker، لكن الوضع الحالي ما زال "${autoReviewModeLabel(nextStatus.autoReview?.mode)}" وليس الوضع المطلوب — لم يتغير وضع الفحص رغم قبول الطلب. أعد المحاولة أو راجع حالة الخدمة.`,
-        });
-        onNotify('warning', 'وضع الفحص لم يتغير', 'الاستجابة قُبلت لكن إعادة القراءة أظهرت الوضع القديم.');
+      let rereadFailed = false;
+      let rereadMode: string | undefined;
+      let rereadCount: number | null = null;
+      try {
+        const nextStatus = await fetchCatalogStatus();
+        rereadMode = nextStatus.autoReview?.mode;
+        rereadCount = typeof nextStatus.autoReview?.shadowSampleCount === 'number' ? nextStatus.autoReview.shadowSampleCount : null;
+      } catch {
+        rereadFailed = true;
+      }
+      const outcome = deriveAutoReviewRequestOutcome({ requestedMode: mode, responseReceived: true, responseOk: true, rereadFailed, rereadMode, rereadCount, previousCount });
+      setAutoReviewRequest(outcome);
+      if (outcome.kind === 'result-completed') {
+        onNotify('success', 'ظهرت نتيجة مراجعة جديدة', outcome.message);
+      } else if (outcome.kind === 'mode-confirmed-awaiting-result') {
+        onNotify('success', 'تم تأكيد وضع Shadow', 'جارٍ التحقق من نتائج المراجعة؛ لم تُثبت نتيجة جديدة بعد.');
+      } else if (outcome.kind === 'mode-confirmed') {
+        onNotify('success', mode === 'off' ? 'تم إيقاف الفحص الآلي' : 'تم تفعيل مسار الاعتماد الآلي', outcome.message);
+      } else if (outcome.kind === 'mismatch') {
+        onNotify('warning', 'وضع الفحص لم يتغير', outcome.message);
+      } else if (outcome.kind === 're-read-failed') {
+        onNotify('warning', 'تعذر التحقق النهائي من وضع الفحص', outcome.message);
       } else {
-        setAutoReviewRequest({
-          kind: 'confirmed',
-          message: mode === 'shadow'
-            ? 'تم تأكيد وضع الفحص: اختبار بلا اعتماد. الاختبار لا يعتمد أي فيديو؛ راجع نتائج العينة قبل التفعيل.'
-            : mode === 'enforce'
-              ? 'تم تأكيد وضع الفحص: الاعتماد الآلي مفعّل. الاعتماد يقتصر على الحالات التي تجتاز كل البوابات؛ غير الواضح يبقى خارج الفيد.'
-              : 'تم تأكيد إيقاف الفحص الآلي. ستظل الموافقات السابقة محفوظة.',
-        });
-        onNotify('success', mode === 'off' ? 'تم إيقاف الفحص الآلي' : mode === 'shadow' ? 'بدأ الاختبار الآلي' : 'تم تفعيل مسار الاعتماد الآلي', mode === 'shadow' ? 'الاختبار لا يعتمد أي فيديو. راجع نتائج العينة قبل التفعيل.' : mode === 'enforce' ? 'الاعتماد يقتصر على الحالات التي تجتاز كل البوابات؛ غير الواضح يبقى خارج الفيد.' : 'ستظل الموافقات السابقة محفوظة.');
+        onNotify('error', 'تعذر تغيير وضع الفحص', outcome.message);
       }
       await reload(true);
     } catch (error) {
-      setAutoReviewRequest({
-        kind: 'failed',
-        message: `تعذر إرسال طلب تغيير وضع الفحص: ${error instanceof Error ? error.message : 'خطأ غير معروف'}`,
-      });
-      onNotify('error', 'تعذر تغيير وضع الفحص', error instanceof Error ? error.message : 'خطأ غير معروف');
+      // reload(true) never throws (it catches internally); this is a safety net
+      // for unexpected failures outside the request/re-read steps.
+      const outcome: AutoReviewRequestOutcome = { kind: 'request-failed', message: `تعذر إتمام طلب تغيير وضع الفحص: ${error instanceof Error ? error.message : 'خطأ غير معروف'}` };
+      setAutoReviewRequest(outcome);
+      onNotify('error', 'تعذر تغيير وضع الفحص', outcome.message);
     } finally {
       setAutoReviewSaving(false);
       setPendingAutoReviewMode(null);
+    }
+  };
+
+  // Manual status refresh for the auto-review outcome: re-fetches catalog status
+  // ONLY — no mode POST, no sample run. Its single job is to detect a newly
+  // completed result after a mode-confirmed-awaiting-result outcome: if the
+  // confirmed count rose above the pre-request count (and the mode is still
+  // shadow), the outcome upgrades to result-completed. Every other outcome is
+  // left untouched (the outcome block records the last request; the section
+  // badge shows the live mode), and a refresh failure is shown persistently
+  // without clearing the prior outcome.
+  const refreshAutoReviewStatus = async () => {
+    setAutoReviewRefreshing(true);
+    setAutoReviewRefreshError(null);
+    try {
+      const nextStatus = await fetchCatalogStatus();
+      setStatus(nextStatus);
+      const nextCount = typeof nextStatus.autoReview?.shadowSampleCount === 'number' ? nextStatus.autoReview.shadowSampleCount : null;
+      setAutoReviewRequest((previous) => {
+        if (!previous || previous.kind !== 'mode-confirmed-awaiting-result') return previous;
+        if (nextStatus.autoReview?.mode !== 'shadow') return previous;
+        if (nextCount !== null && previous.previousCount !== null && nextCount > previous.previousCount) {
+          return deriveAutoReviewRequestOutcome({ requestedMode: 'shadow', responseReceived: true, responseOk: true, rereadFailed: false, rereadMode: 'shadow', rereadCount: nextCount, previousCount: previous.previousCount });
+        }
+        return previous;
+      });
+    } catch (error) {
+      setAutoReviewRefreshError(`تعذر تحديث حالة الفحص: ${error instanceof Error ? error.message : 'خطأ غير معروف'} — لم يتغير آخر طلب مسجل، ويمكن إعادة المحاولة.`);
+    } finally {
+      setAutoReviewRefreshing(false);
     }
   };
 
@@ -466,8 +516,19 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
           </button>
         </div>
         {autoReviewRequest && (
-          <p className={`mt-3 rounded-xl border p-3 text-xs leading-5 ${autoReviewRequest.kind === 'confirmed' ? 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100' : autoReviewRequest.kind === 'mismatch' ? 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100' : 'border-red-200 bg-red-50 text-red-900 dark:border-red-900 dark:bg-red-950/30 dark:text-red-100'}`}>
+          <p className={`mt-3 rounded-xl border p-3 text-xs leading-5 ${autoReviewRequest.kind === 'mode-confirmed' || autoReviewRequest.kind === 'result-completed' ? 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100' : autoReviewRequest.kind === 'mode-confirmed-awaiting-result' ? 'border-sky-200 bg-sky-50 text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-100' : autoReviewRequest.kind === 'mismatch' || autoReviewRequest.kind === 're-read-failed' ? 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100' : 'border-red-200 bg-red-50 text-red-900 dark:border-red-900 dark:bg-red-950/30 dark:text-red-100'}`}>
             {autoReviewRequest.message}
+          </p>
+        )}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button onClick={() => void refreshAutoReviewStatus()} disabled={autoReviewRefreshing || autoReviewSaving} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
+            {autoReviewRefreshing ? 'جار تحديث حالة الفحص…' : 'تحديث حالة الفحص (دون إعادة تشغيل)'}
+          </button>
+          <span className="text-xs text-slate-500">يعيد قراءة الحالة فقط؛ لا يرسل طلب تغيير وضع ولا يبدأ فحصًا جديدًا.</span>
+        </div>
+        {autoReviewRefreshError && (
+          <p className="mt-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs leading-5 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
+            {autoReviewRefreshError}
           </p>
         )}
         <ConfirmModal
