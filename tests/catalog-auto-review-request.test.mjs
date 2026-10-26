@@ -64,6 +64,9 @@ test('Auto-review mode change derives its outcome from validated response and re
   assert.match(body, /responseReceived/);
   assert.match(body, /rereadFailed/);
   assert.match(body, /previousCount/);
+  assert.match(body, /requestFailureKind/);
+  assert.match(body, /requestHttpStatus/);
+  assert.match(view, /ApiRequestError/);
 
   // The misleading toast is gone: mode confirmation must never be presented as
   // a started test, anywhere in the view.
@@ -111,6 +114,8 @@ test('Auto-review mode change verifies the reloaded mode and keeps the outcome p
   const refreshBody = view.slice(refreshStart, decideStart);
   assert.match(refreshBody, /const nextStatus = await fetchCatalogStatus\(\)/);
   assert.doesNotMatch(refreshBody, /setCatalogAutoReviewMode\(/);
+  assert.match(refreshBody, /previous\.kind === 're-read-failed'/);
+  assert.match(refreshBody, /requestedMode: previous\.mode/);
   assert.match(refreshBody, /previous\.kind !== 'mode-confirmed-awaiting-result'/);
   assert.match(refreshBody, /nextCount > previous\.previousCount/);
   assert.match(view, /تحديث حالة الفحص \(دون إعادة تشغيل\)/);
