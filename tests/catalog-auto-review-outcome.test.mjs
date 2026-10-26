@@ -59,26 +59,27 @@ test('Actual review result completion visible in status produces a completed sta
   assert.match(byCount.message, /ظهرت نتيجة مراجعة جديدة مؤكدة/);
   assert.match(byCount.message, /5/);
 
-  const byVisibleResult = deriveAutoReviewRequestOutcome({
+  // A count that is unchanged does not establish that a new result appeared,
+  // even if a caller claims that an old completed result is visible.
+  const unchanged = deriveAutoReviewRequestOutcome({
     ...acceptedShadow,
     rereadMode: 'shadow',
     rereadCount: 4,
     previousCount: 4,
-    completedResultVisible: true,
   });
-  assert.equal(byVisibleResult.kind, 'result-completed');
-  assert.match(byVisibleResult.message, /عدد نتائج العينة المؤكدة الآن: 4/);
+  assert.equal(unchanged.kind, 'mode-confirmed-awaiting-result');
+  assert.notEqual(unchanged.kind, 'result-completed');
+  assert.match(unchanged.message, /لم يزد العدد/);
 
-  // Flag with no usable count still completes, via the visible-result clause.
-  const byVisibleResultNoCount = deriveAutoReviewRequestOutcome({
+  // A non-zero count with no baseline also cannot establish newness.
+  const noBaseline = deriveAutoReviewRequestOutcome({
     ...acceptedShadow,
     rereadMode: 'shadow',
-    rereadCount: null,
+    rereadCount: 7,
     previousCount: null,
-    completedResultVisible: true,
   });
-  assert.equal(byVisibleResultNoCount.kind, 'result-completed');
-  assert.match(byVisibleResultNoCount.message, /نتيجة مراجعة مكتملة ظاهرة في الحالة الحالية/);
+  assert.equal(noBaseline.kind, 'mode-confirmed-awaiting-result');
+  assert.notEqual(noBaseline.kind, 'result-completed');
 
   // Without a baseline count, a non-zero count alone cannot prove a NEW result.
   const noBaseline = deriveAutoReviewRequestOutcome({
@@ -98,6 +99,7 @@ test('Status re-read failure after mode-change acceptance is distinct from reque
     previousCount: 0,
   });
   assert.equal(outcome.kind, 're-read-failed');
+  assert.equal(outcome.previousCount, 0);
   assert.notEqual(outcome.kind, 'request-failed');
   assert.match(outcome.message, /تم قبول طلب تغيير الوضع/);
   assert.match(outcome.message, /إعادة قراءة الحالة فشلت/);
@@ -122,6 +124,28 @@ test('Mode-change request failure and unconfirmed responses all yield the failed
   });
   assert.equal(okFalse.kind, 'request-failed');
   assert.match(okFalse.message, /استجابة غير مؤكدة/);
+
+  const networkFailure = deriveAutoReviewRequestOutcome({
+    requestedMode: 'shadow',
+    responseReceived: false,
+    responseOk: false,
+    rereadFailed: false,
+    requestFailureKind: 'network',
+  });
+  assert.equal(networkFailure.kind, 'request-failed');
+  assert.match(networkFailure.message, /تعذر الاتصال بـ Worker/);
+
+  const httpFailure = deriveAutoReviewRequestOutcome({
+    requestedMode: 'shadow',
+    responseReceived: true,
+    responseOk: false,
+    rereadFailed: false,
+    requestFailureKind: 'http',
+    requestHttpStatus: 503,
+  });
+  assert.equal(httpFailure.kind, 'request-failed');
+  assert.match(httpFailure.message, /HTTP 503/);
+  assert.doesNotMatch(httpFailure.message, /لم يصل أي رد/);
 
   const modeMismatch = deriveAutoReviewRequestOutcome({
     ...acceptedShadow,
