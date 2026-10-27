@@ -199,3 +199,18 @@ test('Provider diagnostics cannot be rerun blindly and retries require a fresh s
   assert.match(worker, /\/api\/admin\/catalog\/auto-review-diagnostic/);
   assert.match(worker, /\/api\/admin\/catalog\/auto-review-retry-failed-shadow/);
 });
+
+
+test('background Gemini diagnostic is reported as pending, not as successful completion', () => {
+  const view = read('src/components/CatalogView.tsx');
+  const api = read('src/services/api.ts');
+  assert.match(api, /pending\?: boolean/);
+  assert.match(api, /outcome: 'pending' \| 'success' \| 'failed'/);
+  assert.match(api, /interactionStatus\?: string/);
+  assert.match(view, /if \(result\.pending \|\| result\.diagnostic\?\.outcome === 'pending'\)/);
+  assert.match(view, /بدأ اختبار اتصال Gemini/);
+  assert.match(view, /الطلب يعمل في الخلفية/);
+  assert.match(view, /جارٍ الفحص في الخلفية/);
+  assert.match(view, /result\.ok && result\.diagnostic\?\.outcome === 'success'/);
+  assert.doesNotMatch(view, /if \(result\.ok\) \{\s*onNotify\('success', 'نجح اختبار اتصال Gemini'/);
+});
