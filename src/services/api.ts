@@ -860,6 +860,21 @@ export interface CatalogAutoReviewScheduleStatus {
   batchesSent: number;
   shadowSampleLimit: number | null;
   shadowReservedCount: number | null;
+  attemptType?: 'initial' | 'retry_failed_sample' | string;
+}
+
+export interface CatalogAutoReviewProviderDiagnostic {
+  outcome: 'success' | 'failed' | string;
+  stage: 'network' | 'http' | 'response_json' | 'response_validation' | 'response' | string;
+  timestamp: string;
+  model: string;
+  httpStatus?: number;
+  providerCode?: number;
+  providerStatus?: string;
+  message?: string;
+  error?: string;
+  videoCount?: number;
+  diagnosticOnly?: boolean;
 }
 
 export interface CatalogStatusResponse {
@@ -884,6 +899,10 @@ export interface CatalogStatusResponse {
     shadowSampleLimit?: number;
     shadowReservedCount?: number;
     lastSchedule?: CatalogAutoReviewScheduleStatus | null;
+    lastProviderDiagnostic?: CatalogAutoReviewProviderDiagnostic | null;
+    failedShadowSampleCount?: number;
+    shadowRetryCount?: number;
+    canRetryFailedShadowSample?: boolean;
   };
   bindings: { kv: boolean; d1: boolean; discoveryQueue: boolean; processingQueue: boolean };
   counts: {
@@ -943,6 +962,33 @@ export async function setCatalogAutoReviewMode(input: {
     body: JSON.stringify(input),
   });
 }
+export async function testCatalogAutoReviewProvider(): Promise<{
+  ok: boolean;
+  error?: string;
+  diagnostic?: CatalogAutoReviewProviderDiagnostic;
+  diagnosticOnly: boolean;
+  reviewResultSaved?: boolean;
+  shadowCountUnchanged?: boolean;
+  modeUnchanged?: boolean;
+}> {
+  return apiRequest('/api/admin/catalog/auto-review-diagnostic', {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+}
+
+export async function retryCatalogFailedShadowSample(): Promise<{
+  ok: boolean;
+  schedule?: CatalogAutoReviewScheduleStatus;
+  reusedExistingReservations?: boolean;
+  uniqueShadowReservationCountUnchanged?: boolean;
+}> {
+  return apiRequest('/api/admin/catalog/auto-review-retry-failed-shadow', {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+}
+
 export async function setCatalogAutoReviewBudget(input: {
   dailyVideoHours: 8 | 24 | 72;
   dailyVideoLimit?: number;

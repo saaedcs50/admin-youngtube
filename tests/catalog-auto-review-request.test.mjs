@@ -172,3 +172,30 @@ test('Catalog V2 shows Worker scheduler diagnostics without implying that schedu
   assert.match(view, /دفعات مراجعة بالطابور/);
   assert.match(view, /هذه البيانات تثبت نتيجة الجدولة فقط/);
 });
+
+
+test('Gemini provider diagnostics are visible and the diagnostic probe is separate from a saved Shadow result', () => {
+  const view = read('src/components/CatalogView.tsx');
+  const api = read('src/services/api.ts');
+  assert.match(api, /export interface CatalogAutoReviewProviderDiagnostic/);
+  assert.match(api, /lastProviderDiagnostic\?: CatalogAutoReviewProviderDiagnostic/);
+  assert.match(api, /testCatalogAutoReviewProvider/);
+  assert.match(api, /retryCatalogFailedShadowSample/);
+  assert.match(view, /اختبار اتصال Gemini \(فيديو واحد\)/);
+  assert.match(view, /result\.diagnostic/);
+  assert.match(view, /HTTP/);
+  assert.match(view, /لا تُسجّل هذه البيانات مفتاح API أو نص الطلب/);
+  assert.match(view, /لا يحفظ تقييمًا ولا يغير وضع التشغيل/);
+  assert.match(view, /status\.autoReview\?\.canRetryFailedShadowSample === true/);
+  assert.match(view, /إعادة محاولة عينة Shadow الحالية/);
+  assert.match(view, /دون زيادة سقف الفيديوهات الفريدة المحجوزة/);
+});
+
+test('Provider diagnostics cannot be rerun blindly and retries require a fresh successful diagnostic', () => {
+  const view = read('src/components/CatalogView.tsx');
+  const worker = read('src/services/api.ts');
+  assert.match(view, /onClick=\{\(\) => void runProviderDiagnostic\(\)\}/);
+  assert.match(view, /onConfirm=\{\(\) => void retryFailedShadowSample\(\)\}/);
+  assert.match(worker, /\/api\/admin\/catalog\/auto-review-diagnostic/);
+  assert.match(worker, /\/api\/admin\/catalog\/auto-review-retry-failed-shadow/);
+});
