@@ -604,6 +604,9 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
             </div>
             {status.autoReview.lastProviderDiagnostic.message && <p className="mt-2 break-words">{status.autoReview.lastProviderDiagnostic.message}</p>}
             {status.autoReview.lastProviderDiagnostic.interactionStatus && <p className="mt-1">حالة التفاعل: {status.autoReview.lastProviderDiagnostic.interactionStatus}</p>}
+            {status.autoReview.lastProviderDiagnostic.outputShape && <p className="mt-1">شكل مخرجات النموذج: {status.autoReview.lastProviderDiagnostic.outputShape} ({formatCount(status.autoReview.lastProviderDiagnostic.outputLength)} حرف)</p>}
+            {Array.isArray(status.autoReview.lastProviderDiagnostic.stepTypes) && status.autoReview.lastProviderDiagnostic.stepTypes.length > 0 && <p className="mt-1">أنواع خطوات التفاعل: {status.autoReview.lastProviderDiagnostic.stepTypes.join('، ')}</p>}
+            {Array.isArray(status.autoReview.lastProviderDiagnostic.contentPartTypes) && status.autoReview.lastProviderDiagnostic.contentPartTypes.length > 0 && <p className="mt-1">أنواع أجزاء المحتوى: {status.autoReview.lastProviderDiagnostic.contentPartTypes.join('، ')}</p>}
             {status.autoReview.lastProviderDiagnostic.error && <p className="mt-1 font-bold">تصنيف الخطأ: {status.autoReview.lastProviderDiagnostic.error}</p>}
             <p className="mt-2 text-slate-500">وقت التشخيص: {Number.isFinite(Date.parse(status.autoReview.lastProviderDiagnostic.timestamp)) ? new Date(status.autoReview.lastProviderDiagnostic.timestamp).toLocaleString('ar-EG') : 'غير متاح'}. لا تُسجّل هذه البيانات مفتاح API أو نص الطلب.</p>
             {status.autoReview.lastProviderDiagnostic.diagnosticOnly && <p className="mt-1 text-slate-500">هذا اختبار اتصال فقط؛ لا يعتمد الفيديو ولا يضيف نتيجة إلى عينة Shadow.</p>}
