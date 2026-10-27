@@ -864,8 +864,8 @@ export interface CatalogAutoReviewScheduleStatus {
 }
 
 export interface CatalogAutoReviewProviderDiagnostic {
-  outcome: 'success' | 'failed' | string;
-  stage: 'network' | 'http' | 'response_json' | 'response_validation' | 'response' | string;
+  outcome: 'pending' | 'success' | 'failed' | string;
+  stage: 'network' | 'http' | 'response_json' | 'response_validation' | 'response' | 'interaction' | string;
   timestamp: string;
   model: string;
   httpStatus?: number;
@@ -875,6 +875,8 @@ export interface CatalogAutoReviewProviderDiagnostic {
   error?: string;
   videoCount?: number;
   diagnosticOnly?: boolean;
+  interactionId?: string;
+  interactionStatus?: string;
 }
 
 export interface CatalogStatusResponse {
@@ -964,6 +966,7 @@ export async function setCatalogAutoReviewMode(input: {
 }
 export async function testCatalogAutoReviewProvider(): Promise<{
   ok: boolean;
+  pending?: boolean;
   error?: string;
   diagnostic?: CatalogAutoReviewProviderDiagnostic;
   diagnosticOnly: boolean;

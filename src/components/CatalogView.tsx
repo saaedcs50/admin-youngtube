@@ -409,8 +409,10 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
     setProviderDiagnosticSaving(true);
     try {
       const result = await testCatalogAutoReviewProvider();
-      if (result.ok) {
-        onNotify('success', 'نجح اختبار اتصال Gemini', 'قبل المزوّد طلبًا تجريبيًا وأعاد تقييمًا صالحًا لفيديو واحد. لم تُحفظ نتيجة مراجعة ولم يتغير وضع التشغيل.');
+      if (result.pending || result.diagnostic?.outcome === 'pending') {
+        onNotify('info', 'بدأ اختبار اتصال Gemini', 'الطلب يعمل في الخلفية. لم تُحفظ نتيجة مراجعة؛ استخدم «تحديث حالة الفحص» لاحقًا لرؤية النتيجة.');
+      } else if (result.ok && result.diagnostic?.outcome === 'success') {
+        onNotify('success', 'نجح اختبار اتصال Gemini', 'اكتمل طلب الفيديو التجريبي وأعاد المزوّد تقييمًا صالحًا. لم تُحفظ نتيجة مراجعة ولم يتغير وضع التشغيل.');
       } else {
         const diagnostic = result.diagnostic;
         const details = [
@@ -422,7 +424,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
       }
       await reload(true);
     } catch (error) {
-      onNotify('error', 'تعذر تنفيذ اختبار اتصال Gemini', error instanceof Error ? error.message : 'خطأ غير معروف');
+      onNotify('error', 'تعذر بدء اختبار اتصال Gemini', error instanceof Error ? error.message : 'خطأ غير معروف');
       await reload(true);
     } finally {
       setProviderDiagnosticSaving(false);
@@ -582,17 +584,26 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
           <div className="mt-4 rounded-xl border border-slate-200 p-3 text-xs leading-5 dark:border-slate-800" aria-live="polite">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="font-extrabold">آخر تشخيص لاتصال Gemini</p>
-              <span className={status.autoReview.lastProviderDiagnostic.outcome === 'success' ? 'rounded-full bg-emerald-100 px-2 py-1 font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200' : 'rounded-full bg-rose-100 px-2 py-1 font-bold text-rose-800 dark:bg-rose-950 dark:text-rose-200'}>
-                {status.autoReview.lastProviderDiagnostic.outcome === 'success' ? 'اتصال ناجح' : 'فشل الاتصال'}
+              <span className={status.autoReview.lastProviderDiagnostic.outcome === 'success'
+                ? 'rounded-full bg-emerald-100 px-2 py-1 font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200'
+                : status.autoReview.lastProviderDiagnostic.outcome === 'pending'
+                  ? 'rounded-full bg-sky-100 px-2 py-1 font-bold text-sky-800 dark:bg-sky-950 dark:text-sky-200'
+                  : 'rounded-full bg-rose-100 px-2 py-1 font-bold text-rose-800 dark:bg-rose-950 dark:text-rose-200'}>
+                {status.autoReview.lastProviderDiagnostic.outcome === 'success'
+                  ? 'اتصال ناجح'
+                  : status.autoReview.lastProviderDiagnostic.outcome === 'pending'
+                    ? 'جارٍ الفحص في الخلفية'
+                    : 'فشل الاتصال'}
               </span>
             </div>
             <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
-              <div><p className="text-slate-500">مرحلة الخطأ</p><p className="font-bold">{status.autoReview.lastProviderDiagnostic.stage || '—'}</p></div>
+              <div><p className="text-slate-500">مرحلة الطلب</p><p className="font-bold">{status.autoReview.lastProviderDiagnostic.stage || '—'}</p></div>
               <div><p className="text-slate-500">HTTP</p><p className="font-bold">{status.autoReview.lastProviderDiagnostic.httpStatus ?? '—'}</p></div>
               <div><p className="text-slate-500">رمز المزوّد</p><p className="font-bold">{status.autoReview.lastProviderDiagnostic.providerStatus || status.autoReview.lastProviderDiagnostic.providerCode || '—'}</p></div>
               <div><p className="text-slate-500">النموذج</p><p className="font-bold">{status.autoReview.lastProviderDiagnostic.model || '—'}</p></div>
             </div>
             {status.autoReview.lastProviderDiagnostic.message && <p className="mt-2 break-words">{status.autoReview.lastProviderDiagnostic.message}</p>}
+            {status.autoReview.lastProviderDiagnostic.interactionStatus && <p className="mt-1">حالة التفاعل: {status.autoReview.lastProviderDiagnostic.interactionStatus}</p>}
             {status.autoReview.lastProviderDiagnostic.error && <p className="mt-1 font-bold">تصنيف الخطأ: {status.autoReview.lastProviderDiagnostic.error}</p>}
             <p className="mt-2 text-slate-500">وقت التشخيص: {Number.isFinite(Date.parse(status.autoReview.lastProviderDiagnostic.timestamp)) ? new Date(status.autoReview.lastProviderDiagnostic.timestamp).toLocaleString('ar-EG') : 'غير متاح'}. لا تُسجّل هذه البيانات مفتاح API أو نص الطلب.</p>
             {status.autoReview.lastProviderDiagnostic.diagnosticOnly && <p className="mt-1 text-slate-500">هذا اختبار اتصال فقط؛ لا يعتمد الفيديو ولا يضيف نتيجة إلى عينة Shadow.</p>}
