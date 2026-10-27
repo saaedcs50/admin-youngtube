@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle, CheckCircle2, Database, ExternalLink, Film, ListChecks, Loader2, Play,
-  RefreshCw, ShieldCheck, UploadCloud, XCircle,
+  RefreshCw, ShieldCheck, UploadCloud, XCircle, FlaskConical, RotateCcw,
 } from 'lucide-react';
 import {
   ApiRequestError, CatalogReviewItem, CatalogStatusResponse, fetchCatalogReviewQueue, fetchCatalogStatus,
   fetchCategories, publishCatalogGeneration, reviewCatalogVideo, startCatalogRebuild, setCatalogAutoReviewMode, setCatalogAutoReviewBudget,
+  testCatalogAutoReviewProvider, retryCatalogFailedShadowSample,
 } from '../services/api';
 import { CategoryItem } from '../types';
 import { ConfirmModal } from './ConfirmModal';
@@ -134,6 +135,9 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
   const [autoReviewRequest, setAutoReviewRequest] = useState<AutoReviewRequestOutcome | null>(null);
   const [autoReviewRefreshing, setAutoReviewRefreshing] = useState(false);
   const [autoReviewRefreshError, setAutoReviewRefreshError] = useState<string | null>(null);
+  const [providerDiagnosticSaving, setProviderDiagnosticSaving] = useState(false);
+  const [shadowRetrySaving, setShadowRetrySaving] = useState(false);
+  const [retryFailedShadowSamplePending, setRetryFailedShadowSamplePending] = useState(false);
   const [busyVideo, setBusyVideo] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<Record<string, string>>({});
   const [safetyReviewed, setSafetyReviewed] = useState<Record<string, boolean>>({});
@@ -401,6 +405,50 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
     }
   };
 
+  const runProviderDiagnostic = async () => {
+    setProviderDiagnosticSaving(true);
+    try {
+      const result = await testCatalogAutoReviewProvider();
+      if (result.ok) {
+        onNotify('success', 'نجح اختبار اتصال Gemini', 'قبل المزوّد طلبًا تجريبيًا وأعاد تقييمًا صالحًا لفيديو واحد. لم تُحفظ نتيجة مراجعة ولم يتغير وضع التشغيل.');
+      } else {
+        const diagnostic = result.diagnostic;
+        const details = [
+          diagnostic?.httpStatus ? 'HTTP ' + diagnostic.httpStatus : '',
+          diagnostic?.providerStatus || '',
+          diagnostic?.message || result.error || 'خطأ غير محدد',
+        ].filter(Boolean).join(' — ');
+        onNotify('error', 'فشل اختبار اتصال Gemini', details);
+      }
+      await reload(true);
+    } catch (error) {
+      onNotify('error', 'تعذر تنفيذ اختبار اتصال Gemini', error instanceof Error ? error.message : 'خطأ غير معروف');
+      await reload(true);
+    } finally {
+      setProviderDiagnosticSaving(false);
+    }
+  };
+
+  const retryFailedShadowSample = async () => {
+    setShadowRetrySaving(true);
+    try {
+      const result = await retryCatalogFailedShadowSample();
+      if (result?.ok) {
+        onNotify('success', 'أعيد إرسال عينة Shadow نفسها', 'أُعيدت جدولة ' + formatCount(result.schedule?.scheduledCount) + ' فيديوهات من الحجوزات الموجودة، دون زيادة سقف الفيديوهات الفريدة البالغ 10.');
+      } else {
+        onNotify('error', 'تعذرت إعادة محاولة العينة', 'لم يؤكد Worker جدولة محاولة جديدة.');
+      }
+      setRetryFailedShadowSamplePending(false);
+      await reload(true);
+    } catch (error) {
+      onNotify('error', 'تعذرت إعادة محاولة العينة', error instanceof Error ? error.message : 'خطأ غير معروف');
+      setRetryFailedShadowSamplePending(false);
+      await reload(true);
+    } finally {
+      setShadowRetrySaving(false);
+    }
+  };
+
   const decide = async (item: CatalogReviewItem, action: 'approve' | 'reject') => {
     const categoryId = selectedCategory[item.video_id] || 'stories_programs';
     if (action === 'approve' && safetyReviewed[item.video_id] !== true) {
@@ -530,6 +578,26 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
           ))}
         </div>
         {!status.autoReview?.providerConfigured && <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">لم يتم إعداد مفتاح Gemini في Worker؛ لا يمكن بدء الاختبار حتى يُضاف كسرّ آمن في Cloudflare.</p>}
+        {status.autoReview?.lastProviderDiagnostic && (
+          <div className="mt-4 rounded-xl border border-slate-200 p-3 text-xs leading-5 dark:border-slate-800" aria-live="polite">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="font-extrabold">آخر تشخيص لاتصال Gemini</p>
+              <span className={status.autoReview.lastProviderDiagnostic.outcome === 'success' ? 'rounded-full bg-emerald-100 px-2 py-1 font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200' : 'rounded-full bg-rose-100 px-2 py-1 font-bold text-rose-800 dark:bg-rose-950 dark:text-rose-200'}>
+                {status.autoReview.lastProviderDiagnostic.outcome === 'success' ? 'اتصال ناجح' : 'فشل الاتصال'}
+              </span>
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
+              <div><p className="text-slate-500">مرحلة الخطأ</p><p className="font-bold">{status.autoReview.lastProviderDiagnostic.stage || '—'}</p></div>
+              <div><p className="text-slate-500">HTTP</p><p className="font-bold">{status.autoReview.lastProviderDiagnostic.httpStatus ?? '—'}</p></div>
+              <div><p className="text-slate-500">رمز المزوّد</p><p className="font-bold">{status.autoReview.lastProviderDiagnostic.providerStatus || status.autoReview.lastProviderDiagnostic.providerCode || '—'}</p></div>
+              <div><p className="text-slate-500">النموذج</p><p className="font-bold">{status.autoReview.lastProviderDiagnostic.model || '—'}</p></div>
+            </div>
+            {status.autoReview.lastProviderDiagnostic.message && <p className="mt-2 break-words">{status.autoReview.lastProviderDiagnostic.message}</p>}
+            {status.autoReview.lastProviderDiagnostic.error && <p className="mt-1 font-bold">تصنيف الخطأ: {status.autoReview.lastProviderDiagnostic.error}</p>}
+            <p className="mt-2 text-slate-500">وقت التشخيص: {Number.isFinite(Date.parse(status.autoReview.lastProviderDiagnostic.timestamp)) ? new Date(status.autoReview.lastProviderDiagnostic.timestamp).toLocaleString('ar-EG') : 'غير متاح'}. لا تُسجّل هذه البيانات مفتاح API أو نص الطلب.</p>
+            {status.autoReview.lastProviderDiagnostic.diagnosticOnly && <p className="mt-1 text-slate-500">هذا اختبار اتصال فقط؛ لا يعتمد الفيديو ولا يضيف نتيجة إلى عينة Shadow.</p>}
+          </div>
+        )}
         {status.autoReview?.lastSchedule ? (
           <div className="mt-4 rounded-xl border border-slate-200 p-3 text-xs leading-5 dark:border-slate-800" aria-live="polite">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -562,6 +630,19 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
             {autoReviewBudgetSaving ? 'جار الحفظ…' : 'حفظ سقف الساعات'}
           </button>
         </div>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button onClick={() => void runProviderDiagnostic()} disabled={providerDiagnosticSaving || autoReviewSaving || status.autoReview?.mode !== 'shadow' || !status.autoReview?.providerConfigured} className="inline-flex items-center gap-2 rounded-xl border border-violet-300 px-4 py-2 text-sm font-bold text-violet-800 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-violet-800 dark:text-violet-200 dark:hover:bg-violet-950">
+            {providerDiagnosticSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <FlaskConical className="h-4 w-4" />}
+            {providerDiagnosticSaving ? 'جار اختبار Gemini…' : 'اختبار اتصال Gemini (فيديو واحد)'}
+          </button>
+          {status.autoReview?.canRetryFailedShadowSample === true && (
+            <button onClick={() => setRetryFailedShadowSamplePending(true)} disabled={shadowRetrySaving || providerDiagnosticSaving || autoReviewSaving} className="inline-flex items-center gap-2 rounded-xl bg-amber-500 px-4 py-2 text-sm font-bold text-slate-950 hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-40">
+              {shadowRetrySaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+              إعادة محاولة العينة الفاشلة نفسها
+            </button>
+          )}
+        </div>
+        <p className="mt-2 text-xs leading-5 text-slate-500">اختبار الاتصال يرسل فيديو واحدًا من العينة الفاشلة إلى Gemini للتحقق من استجابة المزوّد؛ لا يحفظ تقييمًا ولا يغير وضع التشغيل، لكنه يُحسب ضمن ميزانية الفحص اليومية. إعادة محاولة العينة متاحة مرة واحدة فقط بعد نجاح اختبار الاتصال، وتعيد استخدام الحجوزات العشرة نفسها.</p>
         <div className="mt-4 flex flex-wrap gap-2">
           <button onClick={() => requestAutoReviewMode('shadow')} disabled={autoReviewSaving || !status.autoReview?.providerConfigured || status.autoReview?.mode === 'shadow' || status.autoReview?.mode === 'enforce'} className="rounded-xl bg-sky-600 px-4 py-2 text-sm font-bold text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-40">
             {autoReviewSaving ? 'جار الحفظ…' : 'ابدأ اختبار العينة'}
@@ -598,6 +679,16 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
           isLoading={autoReviewSaving}
           onConfirm={() => void confirmAutoReviewMode()}
           onCancel={() => setPendingAutoReviewMode(null)}
+        />
+        <ConfirmModal
+          isOpen={retryFailedShadowSamplePending}
+          title="إعادة محاولة عينة Shadow الحالية"
+          message="سيُعاد إرسال الفيديوهات الفاشلة نفسها، مع عدم زيادة سقف الفيديوهات الفريدة المحجوزة (10). ستُستهلك ميزانية يومية إضافية لأن الطلبات ستُعاد. لن يتغير وضع Shadow، ولن يحدث اعتماد أو نشر تلقائي. لا تتابع إلا إذا نجح اختبار اتصال Gemini للتو."
+          confirmLabel="إعادة محاولة العينة"
+          cancelLabel="إلغاء"
+          isLoading={shadowRetrySaving}
+          onConfirm={() => void retryFailedShadowSample()}
+          onCancel={() => setRetryFailedShadowSamplePending(false)}
         />
         <p className="mt-3 text-xs leading-5 text-slate-500">حدود التشغيل: حتى 2,000 فيديو يوميًا على دفعات من 10، وبحد محتوى افتراضي 8 ساعات يوميًا؛ يمكن اختيار 24 أو 72 ساعة لمشروع Gemini مدفوع بعد تأكيد الميزانية. أقصى مدة للفيديو في هذا المسار 30 دقيقة. الفيديوهات غير المتاحة أو غير الواضحة لا تُعتمد آليًا. بسبب أخذ عينات من الفيديو بواسطة النموذج، لا يُعد هذا ضمانًا كاملًا للسلامة.</p>
       </section>
