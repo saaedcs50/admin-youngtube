@@ -18,7 +18,6 @@ import {
 export const DEFAULT_WORKER_URL = 'https://youngtube-worker.saaedbelal.workers.dev';
 export const STORAGE_KEY_WORKER_URL = 'worker_url';
 export const STORAGE_KEY_ADMIN = 'yt_admin_key';
-export const STORAGE_KEY_REMEMBER = 'yt_admin_remember';
 export const STORAGE_KEY_CATEGORIES = 'yt_admin_categories_cache';
 
 type UnauthorizedHandler = (message?: string) => void;
@@ -69,47 +68,33 @@ export function resetWorkerUrl(): void {
   localStorage.removeItem(STORAGE_KEY_WORKER_URL);
 }
 
-// SECURITY NOTE: this key grants full admin access to the entire backend.
-// This plaintext-in-browser-storage approach is a known interim tradeoff;
-// a short-lived session-token model is planned as a follow-up. Do not weaken this
-// further (e.g. do not add a 'copy key' button, do not log this value, do not
-// send it anywhere except the Authorization header to the configured Worker URL).
+// ADMIN_KEY grants full backend access. Keep it in sessionStorage only; never
+// persist the raw bearer credential in localStorage. A legacy persistent copy
+// is removed on first load, so remembered sessions must sign in again.
 export function getAdminKey(): string | null {
   if (typeof window === 'undefined') return null;
   try {
-    return sessionStorage.getItem(STORAGE_KEY_ADMIN) || localStorage.getItem(STORAGE_KEY_ADMIN);
+    const key = sessionStorage.getItem(STORAGE_KEY_ADMIN);
+    localStorage.removeItem(STORAGE_KEY_ADMIN);
+    localStorage.removeItem('yt_admin_remember');
+    return key;
   } catch {
     return null;
   }
 }
 
-export function isRemembered(): boolean {
-  if (typeof window === 'undefined') return false;
-  return localStorage.getItem(STORAGE_KEY_REMEMBER) === 'true';
-}
-
-// SECURITY NOTE: this key grants full admin access to the entire backend.
-// This plaintext-in-browser-storage approach is a known interim tradeoff;
-// a short-lived session-token model is planned as a follow-up. Do not weaken this
-// further (e.g. do not add a 'copy key' button, do not log this value, do not
-// send it anywhere except the Authorization header to the configured Worker URL).
-export function saveAdminKey(key: string, remember: boolean): void {
+export function saveAdminKey(key: string): void {
   const trimmed = key.trim();
   sessionStorage.setItem(STORAGE_KEY_ADMIN, trimmed);
-  if (remember) {
-    localStorage.setItem(STORAGE_KEY_ADMIN, trimmed);
-    localStorage.setItem(STORAGE_KEY_REMEMBER, 'true');
-  } else {
-    localStorage.removeItem(STORAGE_KEY_ADMIN);
-    localStorage.removeItem(STORAGE_KEY_REMEMBER);
-  }
+  localStorage.removeItem(STORAGE_KEY_ADMIN);
+  localStorage.removeItem('yt_admin_remember');
 }
 
 export function clearAdminKey(): void {
   try {
     sessionStorage.removeItem(STORAGE_KEY_ADMIN);
     localStorage.removeItem(STORAGE_KEY_ADMIN);
-    localStorage.removeItem(STORAGE_KEY_REMEMBER);
+    localStorage.removeItem('yt_admin_remember');
   } catch {
     /* ignore */
   }

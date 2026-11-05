@@ -27,7 +27,6 @@ interface LoginScreenProps {
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   const [adminKey, setAdminKeyInput] = useState('');
-  const [rememberMe, setRememberMe] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -58,8 +57,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
       // 2. Save worker URL if changed
       setWorkerUrl(workerUrl);
 
-      // 3. Save key to storage (sessionStorage always, localStorage if rememberMe)
-      saveAdminKey(cleanKey, rememberMe);
+      // 3. Keep the raw bearer key for this browser session only.
+      saveAdminKey(cleanKey);
 
       setSuccessMessage('تم التحقق بنجاح! جاري الدخول للوحة التحكم...');
 
@@ -192,27 +191,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
               </button>
             </div>
             <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
-              يُحفظ المفتاح محلياً في المتصفح فقط ويُرسل مشفراً عبر Bearer Token
+              يبقى المفتاح في الجلسة الحالية فقط ولا يُحفظ في التخزين الدائم للمتصفح
             </p>
-          </div>
-
-          {/* Remember me option */}
-          <div className="flex items-center justify-between py-1">
-            <label
-              htmlFor="remember-me-checkbox"
-              className="flex items-center gap-2 cursor-pointer select-none"
-            >
-              <input
-                id="remember-me-checkbox"
-                type="checkbox"
-                checked={rememberMe}
-                onChange={(e) => setRememberMe(e.target.checked)}
-                className="w-4 h-4 rounded text-amber-500 border-slate-300 dark:border-slate-700 focus:ring-amber-400 focus:ring-offset-0 bg-slate-50 dark:bg-slate-800 cursor-pointer"
-              />
-              <span className="text-xs font-medium text-slate-600 dark:text-slate-400">
-                تذكر على هذا الجهاز (نسخ إلى التخزين الدائم)
-              </span>
-            </label>
           </div>
 
           {/* Submit button */}
