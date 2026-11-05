@@ -73,21 +73,31 @@ export function resetWorkerUrl(): void {
 // is removed on first load, so remembered sessions must sign in again.
 export function getAdminKey(): string | null {
   if (typeof window === 'undefined') return null;
+  let key: string | null;
   try {
-    const key = sessionStorage.getItem(STORAGE_KEY_ADMIN);
-    localStorage.removeItem(STORAGE_KEY_ADMIN);
-    localStorage.removeItem('yt_admin_remember');
-    return key;
+    key = sessionStorage.getItem(STORAGE_KEY_ADMIN);
   } catch {
     return null;
   }
+  // Cleanup is best-effort so disabled localStorage does not invalidate a session.
+  try {
+    localStorage.removeItem(STORAGE_KEY_ADMIN);
+    localStorage.removeItem('yt_admin_remember');
+  } catch {
+    /* ignore */
+  }
+  return key;
 }
 
 export function saveAdminKey(key: string): void {
   const trimmed = key.trim();
   sessionStorage.setItem(STORAGE_KEY_ADMIN, trimmed);
-  localStorage.removeItem(STORAGE_KEY_ADMIN);
-  localStorage.removeItem('yt_admin_remember');
+  try {
+    localStorage.removeItem(STORAGE_KEY_ADMIN);
+    localStorage.removeItem('yt_admin_remember');
+  } catch {
+    /* ignore */
+  }
 }
 
 export function clearAdminKey(): void {

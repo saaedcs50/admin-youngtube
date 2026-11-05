@@ -24,9 +24,7 @@ import {
   DEFAULT_WORKER_URL,
   getAdminKey,
   getWorkerUrl,
-  isRemembered,
   resetWorkerUrl,
-  saveAdminKey,
   setWorkerUrl,
   validateAdminKey,
 } from '../services/api';
@@ -45,7 +43,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onToggleTheme,
 }) => {
   const [workerUrlInput, setWorkerUrlInput] = useState<string>(getWorkerUrl());
-  const [rememberDevice, setRememberDevice] = useState<boolean>(isRemembered());
   const [isTestingUrl, setIsTestingUrl] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
@@ -92,20 +89,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       onNotify('error', 'فشل التحقق', err?.message || 'تأكد من الرابط أو المفتاح');
     } finally {
       setIsTestingUrl(false);
-    }
-  };
-
-  const handleToggleRemember = (checked: boolean) => {
-    setRememberDevice(checked);
-    if (currentKey) {
-      saveAdminKey(currentKey, checked);
-      onNotify(
-        'info',
-        checked ? 'تم تفعيل التذكر' : 'تم إلغاء التذكر',
-        checked
-          ? 'تم حفظ المفتاح في التخزين الدائم (localStorage)'
-          : 'تم قصر المفتاح على الجلسة فقط (sessionStorage)'
-      );
     }
   };
 
@@ -213,26 +196,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <span className="font-mono font-bold text-slate-900 dark:text-slate-100">{maskedKey}</span>
           </div>
 
-          <div className="flex items-center justify-between pt-2 border-t border-slate-200 dark:border-slate-700/60">
-            <label
-              htmlFor="settings-remember-checkbox"
-              className="flex items-center gap-2 cursor-pointer select-none"
-            >
-              <input
-                id="settings-remember-checkbox"
-                type="checkbox"
-                checked={rememberDevice}
-                onChange={(e) => handleToggleRemember(e.target.checked)}
-                className="w-4 h-4 rounded text-amber-500 border-slate-300 dark:border-slate-700 focus:ring-amber-400 focus:ring-offset-0 bg-white dark:bg-slate-900 cursor-pointer"
-              />
-              <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                تذكر على هذا الجهاز (نسخ إلى localStorage)
-              </span>
-            </label>
-            <span className="text-[11px] text-slate-400">
-              {rememberDevice ? 'محفوظ في localStorage' : 'محفوظ في sessionStorage فقط'}
-            </span>
-          </div>
+          <p className="pt-2 border-t border-slate-200 dark:border-slate-700/60 text-[11px] text-slate-500 dark:text-slate-400">
+            يُحفظ مفتاح المشرف في الجلسة الحالية فقط ولا يُنسخ إلى التخزين الدائم؛ سجّل الدخول مجدداً بعد انتهاء الجلسة.
+          </p>
         </div>
 
         <div className="flex items-center justify-between pt-2">
