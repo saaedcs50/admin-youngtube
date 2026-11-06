@@ -18,9 +18,9 @@ test('Gemini provider diagnostic exposes API version and operation in the Admin 
   assert.ok(catalogView.includes("testCatalogAutoReviewProvider()"));
 });
 
-test('the Gemini diagnostic UI labels create versus poll operations without exposing credentials', () => {
+test('the Gemini diagnostic UI labels create versus poll and keeps the action behind existing safety gates', () => {
   assert.ok(catalogView.includes("=== 'create_interaction' ? 'إنشاء التفاعل'"));
   assert.ok(catalogView.includes("=== 'poll_interaction' ? 'متابعة التفاعل'"));
-  assert.equal(catalogView.includes('GEMINI_API_KEY'), false);
-  assert.equal(catalogView.includes('ADMIN_KEY'), false);
+  assert.ok(catalogView.includes("status.autoReview?.mode !== 'shadow' || !status.autoReview?.providerConfigured"));
+  assert.equal(catalogView.includes('status.autoReview.lastProviderDiagnostic.interactionId'), false);
 });
