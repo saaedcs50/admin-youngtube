@@ -44,5 +44,8 @@ jobs:
       - name: Run Catalog V2 white-screen regression tests
         run: node --test tests/catalog-white-screen.test.mjs
 
+      - name: Run Gemini provider diagnostic UI contract tests
+        run: node --test tests/catalog-provider-diagnostic-ui.test.mjs
+
       - name: Build admin assets
         run: npm run build

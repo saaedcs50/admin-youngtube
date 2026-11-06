@@ -596,8 +596,10 @@ export const CatalogView: React.FC<CatalogViewProps> = ({ onNotify }) => {
                     : 'فشل الاتصال'}
               </span>
             </div>
-            <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
+            <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-3">
               <div><p className="text-slate-500">مرحلة الطلب</p><p className="font-bold">{status.autoReview.lastProviderDiagnostic.stage || '—'}</p></div>
+              <div><p className="text-slate-500">نوع العملية</p><p className="font-bold">{status.autoReview.lastProviderDiagnostic.operation === 'create_interaction' ? 'إنشاء التفاعل' : status.autoReview.lastProviderDiagnostic.operation === 'poll_interaction' ? 'متابعة التفاعل' : status.autoReview.lastProviderDiagnostic.operation || '—'}</p></div>
+              <div><p className="text-slate-500">نسخة API</p><p className="font-bold">{status.autoReview.lastProviderDiagnostic.apiVersion || '—'}</p></div>
               <div><p className="text-slate-500">HTTP</p><p className="font-bold">{status.autoReview.lastProviderDiagnostic.httpStatus ?? '—'}</p></div>
               <div><p className="text-slate-500">رمز المزوّد</p><p className="font-bold">{status.autoReview.lastProviderDiagnostic.providerStatus || status.autoReview.lastProviderDiagnostic.providerCode || '—'}</p></div>
               <div><p className="text-slate-500">النموذج</p><p className="font-bold">{status.autoReview.lastProviderDiagnostic.model || '—'}</p></div>

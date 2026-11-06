@@ -861,6 +861,8 @@ export interface CatalogAutoReviewScheduleStatus {
 export interface CatalogAutoReviewProviderDiagnostic {
   outcome: 'pending' | 'success' | 'failed' | string;
   stage: 'network' | 'http' | 'response_json' | 'response_validation' | 'response' | 'interaction' | string;
+  apiVersion?: string;
+  operation?: 'create_interaction' | 'poll_interaction' | string;
   timestamp: string;
   model: string;
   httpStatus?: number;
